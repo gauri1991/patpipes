@@ -1,0 +1,7 @@
+{
+  "apiTimeout": 120000,
+  "requestTimeout": 180000,
+  "maxRetries": 5,
+  "retryDelay": 2000,
+  "connectionTimeout": 30000
+}

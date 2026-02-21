@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflow Completed</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 8px 8px 0 0;
+            text-align: center;
+        }
+        .content {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 0 0 8px 8px;
+        }
+        .success-badge {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            margin: 20px 0;
+            border-left: 4px solid #28a745;
+        }
+        .workflow-summary {
+            background: white;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        .stat {
+            display: inline-block;
+            background: #e9ecef;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #28a745;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            text-transform: uppercase;
+        }
+        .button {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .footer {
+            text-align: center;
+            color: #6c757d;
+            font-size: 12px;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎉 Workflow Completed!</h1>
+        <p>Congratulations on completing your workflow</p>
+    </div>
+    
+    <div class="content">
+        <div class="success-badge">
+            <h3>✅ Successfully Completed</h3>
+            <p>{{ workflow_instance.name }}</p>
+        </div>
+        
+        <div class="workflow-summary">
+            <h3>Workflow Summary</h3>
+            
+            <div style="text-align: center; margin: 20px 0;">
+                <div class="stat">
+                    <div class="stat-value">{{ workflow_instance.progress_percentage|default:"100" }}%</div>
+                    <div class="stat-label">Progress</div>
+                </div>
+                
+                {% if workflow_instance.step_instances.count %}
+                <div class="stat">
+                    <div class="stat-value">{{ workflow_instance.step_instances.count }}</div>
+                    <div class="stat-label">Steps</div>
+                </div>
+                {% endif %}
+                
+                {% if duration %}
+                <div class="stat">
+                    <div class="stat-value">{{ duration }}</div>
+                    <div class="stat-label">Duration</div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <p><strong>Template:</strong> {{ workflow_instance.workflow_template.name }}</p>
+            <p><strong>Completed by:</strong> {{ completed_by.get_full_name }}</p>
+            <p><strong>Completion Date:</strong> {{ completion_time|date:"F j, Y g:i A" }}</p>
+            
+            {% if workflow_instance.assigned_to %}
+            <p><strong>Originally Assigned to:</strong> {{ workflow_instance.assigned_to.get_full_name }}</p>
+            {% endif %}
+        </div>
+        
+        {% if workflow_instance.step_instances.all %}
+        <div class="workflow-summary">
+            <h4>📋 Completed Steps</h4>
+            {% for step in workflow_instance.step_instances.all %}
+                {% if step.status == 'completed' %}
+                <div style="padding: 8px; border-left: 3px solid #28a745; margin: 5px 0; background: #f8f9fa;">
+                    <strong>{{ step.workflow_step.name }}</strong>
+                    {% if step.assigned_to %}
+                        <span style="float: right; font-size: 12px; color: #6c757d;">
+                            by {{ step.assigned_to.get_full_name }}
+                        </span>
+                    {% endif %}
+                    {% if step.quality_score %}
+                        <br><small>Quality Score: {{ step.quality_score }}%</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        <div style="text-align: center;">
+            <a href="https://patentplatform.com/dashboard/workflows/{{ workflow_instance.id }}" class="button">
+                View Workflow Details
+            </a>
+        </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background: #d1ecf1; border-left: 4px solid #17a2b8; border-radius: 4px;">
+            <p style="margin: 0;"><strong>🚀 Next Steps:</strong> This workflow is now complete. Check your dashboard for any follow-up actions or new workflows that may have been triggered.</p>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p>Workflow completed via Patent Analytics Platform</p>
+        <p>© 2024 Patent Analytics Platform. All rights reserved.</p>
+    </div>
+</body>
+</html>

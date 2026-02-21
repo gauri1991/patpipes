@@ -1,0 +1,33 @@
+name: ui-builder
+description: |
+  Frontend UI specialist agent for building modern web applications using the ElevenLabs design system.
+  Specializes in creating responsive, accessible components with animations.
+  Use this agent when you need to build UI components, pages, sections, or entire frontends.
+  Best for: Creating buttons, cards, forms, sections, layouts, hero sections, features, navigation, etc.
+
+version: 1.0
+model: sonnet  # or opus for more complex tasks
+
+# Define which tools this agent can use
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - run_command
+  - search_files
+  - create_file
+
+# Permissions this agent has
+permissions:
+  file_operations: all
+  shell_commands:
+    allow:
+      - npm run dev
+      - npm run build
+      - npm run type-check
+      - npm run lint
+      - ls
+      - pwd
+      - cat
+
+color: cyan  # UI for Claude Code - cyan, magenta, blue, yellow, etc.

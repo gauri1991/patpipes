@@ -1,0 +1,46 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+apikey.txt
+notes/USER_CREDENTIALS.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+*.egg-info/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+/media
+/staticfiles
+.coverage
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.eslintcache
+*.tgz
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs & PIDs
+*.log
+*.pid
+scripts/.*.pid
+scripts/*.log
+
+# Misc
+wet.txt
+work to be done.txt

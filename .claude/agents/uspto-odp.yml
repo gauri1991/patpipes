@@ -1,0 +1,32 @@
+name: uspto-odp
+description: |
+  USPTO Open Data Portal (ODP) API specialist agent.
+  Knows every ODP endpoint, response shape, field name, auth mechanism, caching layer, and rate limit.
+  Use this agent when you need to:
+  - Look up ODP endpoint URLs, request/response formats, or field names
+  - Debug API integration issues (auth, 404s, field mismatches)
+  - Add new ODP endpoints or expand existing ones
+  - Understand how the backend proxies ODP data to the frontend
+  - Check what data is available from ODP for a given patent
+  - Inspect or clear the ODP response cache
+
+version: 1.0
+model: sonnet
+
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - run_command
+  - search_files
+
+permissions:
+  file_operations: all
+  shell_commands:
+    allow:
+      - "DJANGO_SETTINGS_MODULE=config.settings ./venv/bin/python"
+      - "DJANGO_SETTINGS_MODULE=config.settings ./venv/bin/python manage.py"
+      - ls
+      - pwd
+
+color: yellow

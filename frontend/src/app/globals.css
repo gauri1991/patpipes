@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Professional Theme - Pantone Timeless Elegance */
+    --background: 0 0% 100%;
+    --foreground: 210 24% 16%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 210 24% 16%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 24% 16%;
+    
+    /* Primary - Pantone 5415 C (Deep Slate Blue) */
+    --primary: 207 26% 45%;
+    --primary-foreground: 0 0% 98%;
+    
+    /* Secondary - Pantone Warm Gray 2 C */
+    --secondary: 30 8% 66%;
+    --secondary-foreground: 210 24% 16%;
+    
+    /* Muted - Light Gray */
+    --muted: 210 8% 96%;
+    --muted-foreground: 210 12% 45%;
+    
+    /* Accent - Pantone 7543 C (Silver) */
+    --accent: 180 2% 70%;
+    --accent-foreground: 210 24% 16%;
+    
+    /* Destructive - Pantone 7597 C (Crimson) */
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 210 14% 89%;
+    --input: 210 14% 89%;
+    --ring: 207 26% 45%;
+    
+    --radius: 0.5rem;
+    
+    /* Chart colors for analytics */
+    --chart-1: 207 26% 45%;  /* Primary blue */
+    --chart-2: 145 35% 55%;  /* Success green */
+    --chart-3: 30 70% 60%;   /* Warning amber */
+    --chart-4: 0 65% 55%;    /* Error red */
+    --chart-5: 260 30% 60%;  /* Purple */
+  }
+  
+  .dark {
+    /* Dark Theme - Professional Night Mode */
+    --background: 210 24% 8%;
+    --foreground: 0 0% 95%;
+    
+    --card: 210 24% 10%;
+    --card-foreground: 0 0% 95%;
+    
+    --popover: 210 24% 10%;
+    --popover-foreground: 0 0% 95%;
+    
+    --primary: 207 26% 55%;
+    --primary-foreground: 210 24% 8%;
+    
+    --secondary: 30 8% 25%;
+    --secondary-foreground: 0 0% 95%;
+    
+    --muted: 210 12% 18%;
+    --muted-foreground: 210 8% 65%;
+    
+    --accent: 180 2% 30%;
+    --accent-foreground: 0 0% 95%;
+    
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 210 12% 18%;
+    --input: 210 12% 18%;
+    --ring: 207 26% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 #f1f5f9;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 12px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 6px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 6px;
+    border: 2px solid #f1f5f9;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+  
+  /* USPTO Patent Formatting Requirements */
+  .uspto-formatting {
+    /* Line spacing - 1.5x (USPTO recommends 1.5 or double spacing) */
+    line-height: 1.5;
+    
+    /* Paragraph spacing - double spacing between paragraphs */
+    white-space: pre-wrap;
+    
+    /* Text justification - left aligned as per USPTO */
+    text-align: left;
+    
+    /* Proper margins for readability */
+    padding: 1.5rem;
+    
+    /* Ensure consistent paragraph breaks */
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+  
+  /* Enhanced paragraph spacing for USPTO compliance */
+  .uspto-formatting:focus {
+    outline: none;
+  }
+}

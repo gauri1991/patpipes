@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflow Notification</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 8px 8px 0 0;
+            text-align: center;
+        }
+        .content {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 0 0 8px 8px;
+        }
+        .workflow-info {
+            background: white;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            border-left: 4px solid #667eea;
+        }
+        .status {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .status.completed { background: #d4edda; color: #155724; }
+        .status.in_progress { background: #d1ecf1; color: #0c5460; }
+        .status.failed { background: #f8d7da; color: #721c24; }
+        .button {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .footer {
+            text-align: center;
+            color: #6c757d;
+            font-size: 12px;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔄 Workflow Notification</h1>
+        <p>Patent Analytics Platform</p>
+    </div>
+    
+    <div class="content">
+        <h2>Workflow Update</h2>
+        
+        {% if workflow_instance %}
+        <div class="workflow-info">
+            <h3>{{ workflow_instance.name }}</h3>
+            <p><strong>Template:</strong> {{ workflow_instance.workflow_template.name }}</p>
+            <p><strong>Status:</strong> <span class="status {{ workflow_instance.status }}">{{ workflow_instance.status|title }}</span></p>
+            <p><strong>Progress:</strong> {{ workflow_instance.progress_percentage|default:"0" }}%</p>
+            
+            {% if workflow_instance.assigned_to %}
+            <p><strong>Assigned to:</strong> {{ workflow_instance.assigned_to.get_full_name }}</p>
+            {% endif %}
+            
+            {% if workflow_instance.due_date %}
+            <p><strong>Due Date:</strong> {{ workflow_instance.due_date }}</p>
+            {% endif %}
+            
+            {% if workflow_instance.tags %}
+            <p><strong>Tags:</strong> 
+                {% for tag in workflow_instance.tags %}
+                    <span style="background: #e9ecef; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ tag }}</span>
+                {% endfor %}
+            </p>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        {% if step_instance %}
+        <div class="workflow-info">
+            <h4>📝 Step Details</h4>
+            <p><strong>Step:</strong> {{ step_instance.workflow_step.name }}</p>
+            <p><strong>Status:</strong> <span class="status {{ step_instance.status }}">{{ step_instance.status|title }}</span></p>
+            
+            {% if step_instance.assigned_to %}
+            <p><strong>Assigned to:</strong> {{ step_instance.assigned_to.get_full_name }}</p>
+            {% endif %}
+            
+            {% if step_instance.quality_score %}
+            <p><strong>Quality Score:</strong> {{ step_instance.quality_score }}%</p>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        {% if trigger_time %}
+        <p><strong>Notification Time:</strong> {{ trigger_time }}</p>
+        {% endif %}
+        
+        <a href="https://patentplatform.com/dashboard/workflows" class="button">
+            View Workflow Dashboard
+        </a>
+        
+        <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+            <p style="margin: 0;"><strong>💡 Quick Tip:</strong> You can manage your workflow notifications in your account settings.</p>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p>This is an automated notification from Patent Analytics Platform</p>
+        <p>© 2024 Patent Analytics Platform. All rights reserved.</p>
+    </div>
+</body>
+</html>

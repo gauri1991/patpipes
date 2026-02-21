@@ -1,0 +1,31 @@
+name: help-docs
+description: |
+  Help documentation manager agent for the Patent Analytics Platform.
+  Creates, updates, and tracks help articles and categories in the platform's built-in Help Center.
+  Use this agent when you need to:
+  - Document a new feature or module as a help article
+  - Update existing documentation after feature changes
+  - Audit help content for accuracy against current codebase
+  - List and track all help categories and articles
+  - Create new help categories
+
+version: 1.0
+model: sonnet
+
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - run_command
+  - search_files
+
+permissions:
+  file_operations: all
+  shell_commands:
+    allow:
+      - "DJANGO_SETTINGS_MODULE=config.settings ./venv/bin/python"
+      - "DJANGO_SETTINGS_MODULE=config.settings ./venv/bin/python manage.py"
+      - ls
+      - pwd
+
+color: blue
