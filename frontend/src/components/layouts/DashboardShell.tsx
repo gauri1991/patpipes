@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -25,7 +25,8 @@ import {
   Scale,
   HelpCircle,
   SearchCheck,
-  Tags
+  Tags,
+  MessageSquare
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ import { useAuth } from '@/domains/accounts/hooks/useAuth';
 import { useUserPermissions } from '@/domains/accounts/hooks/useUserPermissions';
 import { cn } from '@/lib/utils';
 import { NotificationCenter } from '@/components/ui/NotificationCenter';
+import { GlobalSearch } from '@/components/search/GlobalSearch';
 
 interface NavigationItem {
   name: string;
@@ -131,12 +133,19 @@ const navigation: NavigationItem[] = [
     description: 'IPC & CPC classification browser',
     permission: 'sidebar_classifications'
   },
-  { 
-    name: 'Attorney Network', 
-    href: '/dashboard/attorney', 
+  {
+    name: 'Attorney Network',
+    href: '/dashboard/attorney',
     icon: Users,
     description: 'Professional directory',
     permission: 'sidebar_attorney_network'
+  },
+  {
+    name: 'Collaboration',
+    href: '/dashboard/collaboration',
+    icon: MessageSquare,
+    description: 'Team collaboration and comments',
+    permission: 'sidebar_collaboration'
   },
 ];
 
@@ -158,10 +167,24 @@ export function DashboardShell({ children }: DashboardShellProps) {
     }
     return false;
   });
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
   const { hasPermission } = useUserPermissions();
+
+  // Cmd+K / Ctrl+K keyboard shortcut for global search
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      setGlobalSearchOpen(prev => !prev);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   const handleLogout = async () => {
     await logout();
@@ -265,6 +288,30 @@ export function DashboardShell({ children }: DashboardShellProps) {
 
           {/* Right side */}
           <div className="flex items-center gap-x-4 lg:gap-x-6">
+            {/* Global Search Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setGlobalSearchOpen(true)}
+              className="hidden sm:flex items-center gap-2 text-muted-foreground h-9 w-64 justify-start"
+              aria-label="Open global search"
+            >
+              <Search className="h-4 w-4" />
+              <span className="text-sm">Search...</span>
+              <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+                <span className="text-xs">&#8984;</span>K
+              </kbd>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setGlobalSearchOpen(true)}
+              className="sm:hidden"
+              aria-label="Open global search"
+            >
+              <Search className="h-5 w-5" />
+            </Button>
+
             {/* Notifications */}
             <NotificationCenter />
 
@@ -328,6 +375,9 @@ export function DashboardShell({ children }: DashboardShellProps) {
           </div>
         </main>
       </div>
+
+      {/* Global Search Dialog */}
+      <GlobalSearch open={globalSearchOpen} onOpenChange={setGlobalSearchOpen} />
     </div>
   );
 

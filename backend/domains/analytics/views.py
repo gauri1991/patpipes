@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Count, Q, Avg
 from django.http import HttpResponse
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from datetime import timedelta
@@ -33,9 +33,12 @@ from .file_processors import process_patent_dataset
 
 class AnalyticsProjectViewSet(viewsets.ModelViewSet):
     """Analytics project management"""
-    
+
     queryset = AnalyticsProject.objects.all()
     permission_classes = [permissions.AllowAny]  # Temporary for development
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'description']
+    ordering_fields = ['created_at', 'updated_at', 'name', 'status', 'priority']
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -57,8 +60,16 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
                 Q(created_by=user) | Q(assigned_to=user)
             )
         
+        # Date range filtering
+        created_after = self.request.query_params.get('created_after')
+        created_before = self.request.query_params.get('created_before')
+        if created_after:
+            queryset = queryset.filter(created_at__gte=created_after)
+        if created_before:
+            queryset = queryset.filter(created_at__lte=created_before)
+
         return queryset.order_by('-updated_at')
-    
+
     def perform_create(self, serializer):
         """Handle project creation"""
         user = self.request.user
@@ -540,15 +551,49 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
             'current_status': project.status,
             'completed_date': project.completed_date.isoformat() if project.completed_date else None
         })
-    
-    
+
+    @action(detail=True, methods=['post'])
+    def analyze_landscape(self, request, pk=None):
+        """Run landscape analysis for a project"""
+        from .algorithms import analyze_landscape as run_landscape
+        project = self.get_object()
+        result = run_landscape(str(project.id))
+        return Response(result)
+
+    @action(detail=True, methods=['post'])
+    def run_fto(self, request, pk=None):
+        """Run freedom-to-operate analysis"""
+        from .algorithms import run_fto_analysis
+        project = self.get_object()
+        target_description = request.data.get('target_description', '')
+        result = run_fto_analysis(str(project.id), target_description)
+        return Response(result)
+
+    @action(detail=True, methods=['post'])
+    def find_white_space(self, request, pk=None):
+        """Identify white space opportunities"""
+        from .algorithms import identify_white_space
+        project = self.get_object()
+        result = identify_white_space(str(project.id))
+        return Response(result)
+
+    @action(detail=True, methods=['post'])
+    def forecast_trends(self, request, pk=None):
+        """Analyze and forecast technology trends"""
+        from .algorithms import analyze_trends
+        project = self.get_object()
+        result = analyze_trends(str(project.id))
+        return Response(result)
 
 
 class TechnologyAreaViewSet(viewsets.ModelViewSet):
     """Technology area management"""
-    
+
     serializer_class = TechnologyAreaSerializer
     permission_classes = [permissions.AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'description', 'keywords']
+    ordering_fields = ['created_at', 'name', 'patent_count']
     
     def get_queryset(self):
         project_id = self.request.query_params.get('project_id')
@@ -559,9 +604,12 @@ class TechnologyAreaViewSet(viewsets.ModelViewSet):
 
 class PatentDatasetViewSet(viewsets.ModelViewSet):
     """Patent dataset management"""
-    
+
     serializer_class = PatentDatasetSerializer
     permission_classes = [permissions.AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'description']
+    ordering_fields = ['created_at', 'updated_at', 'name', 'processing_status']
     
     def get_queryset(self):
         project_id = self.request.query_params.get('project_id')
@@ -1119,9 +1167,12 @@ class PatentDatasetViewSet(viewsets.ModelViewSet):
 
 class CompetitorProfileViewSet(viewsets.ModelViewSet):
     """Competitor profile management"""
-    
+
     serializer_class = CompetitorProfileSerializer
     permission_classes = [permissions.AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'description', 'headquarters_country']
+    ordering_fields = ['created_at', 'name']
     
     def get_queryset(self):
         project_id = self.request.query_params.get('project_id')
@@ -1632,6 +1683,9 @@ class AnalyticsInsightViewSet(viewsets.ModelViewSet):
 
     serializer_class = AnalyticsInsightSerializer
     permission_classes = [permissions.AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['title', 'description']
+    ordering_fields = ['created_at', 'importance_score']
 
     def get_queryset(self):
         project_id = self.request.query_params.get('project_id')

@@ -67,6 +67,54 @@ import { ComprehensiveTemplatesTab } from '@/components/analytics/ComprehensiveT
 import { GlobalCompetitorsTab } from '@/components/analytics/GlobalCompetitorsTab';
 import { GlobalTechnologyAreasTab } from '@/components/analytics/GlobalTechnologyAreasTab';
 import { CreateProjectDialog } from '@/components/analytics/CreateProjectDialog';
+import { AdvancedSearchBar, type FilterOption, type SortOption } from '@/components/search/AdvancedSearchBar';
+
+const PROJECT_FILTER_OPTIONS: FilterOption[] = [
+  {
+    key: 'status',
+    label: 'Status',
+    type: 'select',
+    options: [
+      { value: 'draft', label: 'Draft' },
+      { value: 'active', label: 'Active' },
+      { value: 'data_collection', label: 'Data Collection' },
+      { value: 'patent_analysis', label: 'Patent Analysis' },
+      { value: 'visualization', label: 'Visualization' },
+      { value: 'completed', label: 'Completed' },
+      { value: 'on_hold', label: 'On Hold' },
+      { value: 'cancelled', label: 'Cancelled' },
+    ],
+  },
+  {
+    key: 'priority',
+    label: 'Priority',
+    type: 'select',
+    options: [
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'urgent', label: 'Urgent' },
+    ],
+  },
+  {
+    key: 'created_after',
+    label: 'Created After',
+    type: 'date',
+  },
+  {
+    key: 'created_before',
+    label: 'Created Before',
+    type: 'date',
+  },
+];
+
+const PROJECT_SORT_OPTIONS: SortOption[] = [
+  { value: 'created_at', label: 'Date Created' },
+  { value: 'updated_at', label: 'Date Updated' },
+  { value: 'name', label: 'Name' },
+  { value: 'status', label: 'Status' },
+  { value: 'priority', label: 'Priority' },
+];
 
 export default function AnalyticsPage() {
   const router = useRouter();
@@ -76,6 +124,7 @@ export default function AnalyticsPage() {
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [showSettings, setShowSettings] = useState(false);
+  const [, setAdvancedFilterParams] = useState<Record<string, string>>({});
 
   // Data hooks
   const { dashboard, loading: dashboardLoading } = useAnalyticsDashboard();
@@ -328,68 +377,20 @@ export default function AnalyticsPage() {
 
         {/* Analytics Projects Tab */}
         <TabsContent value="projects" className="space-y-4">
-          {/* Search and Filters */}
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search projects..."
-                className="pl-10"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            
-            {/* Status Filter */}
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="data_collection">Data Collection</SelectItem>
-                <SelectItem value="patent_analysis">Patent Analysis</SelectItem>
-                <SelectItem value="visualization">Visualization</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="on_hold">On Hold</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Priority Filter */}
-            <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by priority" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Priority</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="urgent">Urgent</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Type Filter */}
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Filter by type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="landscape_analysis">Landscape Analysis</SelectItem>
-                <SelectItem value="competitive_intelligence">Competitive Intelligence</SelectItem>
-                <SelectItem value="fto_analysis">FTO Analysis</SelectItem>
-                <SelectItem value="white_space_analysis">White Space Analysis</SelectItem>
-                <SelectItem value="portfolio_assessment">Portfolio Assessment</SelectItem>
-                <SelectItem value="technology_trends">Technology Trends</SelectItem>
-                <SelectItem value="market_analysis">Market Analysis</SelectItem>
-                <SelectItem value="investment_analysis">Investment Analysis</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Advanced Search and Filters */}
+          <AdvancedSearchBar
+            onFilterChange={(params) => {
+              setAdvancedFilterParams(params);
+              // Sync with existing local filters for client-side filtering
+              setSearchTerm(params.search || '');
+              setStatusFilter(params.status || 'all');
+              setPriorityFilter(params.priority || 'all');
+            }}
+            storageKey="analytics_projects"
+            filterOptions={PROJECT_FILTER_OPTIONS}
+            sortOptions={PROJECT_SORT_OPTIONS}
+            placeholder="Search analytics projects..."
+          />
 
           {/* Projects Content */}
           {projectsLoading ? (

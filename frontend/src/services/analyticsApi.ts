@@ -398,6 +398,124 @@ export interface MappingTestResult {
   message?: string;
 }
 
+// Advanced Analytics Response Interfaces
+
+export interface LandscapeCluster {
+  id: string;
+  name: string;
+  patent_count: number;
+  keywords: string[];
+  ipc_classes: string[];
+  density: number;
+  filing_trend: Array<{ year: number; count: number }>;
+}
+
+export interface LandscapeAnalysis {
+  project_id: string;
+  total_patents: number;
+  total_technology_areas: number;
+  clusters: LandscapeCluster[];
+  gaps: LandscapeCluster[];
+  evolution: Array<{ year: number; count: number }>;
+  geographic_distribution: Record<string, number>;
+  average_density: number;
+}
+
+export interface ClaimAnalysis {
+  claim_number: string;
+  text: string;
+  coverage_score: number;
+  risk_level: 'high' | 'medium' | 'low' | 'none';
+}
+
+export interface PatentAssessment {
+  patent_id: string;
+  title: string;
+  assignee: string;
+  filing_date: string | null;
+  risk_score: number;
+  risk_level: 'high' | 'medium' | 'low' | 'none';
+  independent_claims_count: number;
+  dependent_claims_count: number;
+  claim_analysis: ClaimAnalysis[];
+  country_code: string;
+  legal_status: string;
+}
+
+export interface FtoAnalysis {
+  project_id: string;
+  total_patents_analyzed: number;
+  target_description: string;
+  overall_risk_score: number;
+  overall_risk_level: 'high' | 'medium' | 'low' | 'none';
+  risk_summary: {
+    high: number;
+    medium: number;
+    low: number;
+    none: number;
+  };
+  patent_assessments: PatentAssessment[];
+  recommendations: string[];
+}
+
+export interface WhiteSpaceMatrixRow {
+  technology_area: string;
+  technology_area_id: string;
+  total_patents: number;
+  domains: Record<string, number>;
+}
+
+export interface WhiteSpaceOpportunity {
+  technology_area: string;
+  application_domain: string;
+  patent_count: number;
+  opportunity_score: number;
+  recommendation: string;
+}
+
+export interface WhiteSpaceAnalysis {
+  project_id: string;
+  total_patents: number;
+  technology_areas: string[];
+  application_domains: string[];
+  matrix: WhiteSpaceMatrixRow[];
+  opportunities: WhiteSpaceOpportunity[];
+  total_white_spaces: number;
+  total_low_density: number;
+}
+
+export interface FilingVelocityPoint {
+  month: string;
+  count: number;
+  moving_avg: number;
+}
+
+export interface ForecastPoint {
+  month: string;
+  predicted: number;
+  lower_bound: number;
+  upper_bound: number;
+}
+
+export interface AreaTrend {
+  name: string;
+  total_patents: number;
+  yearly_data: Array<{ year: number; count: number }>;
+  is_emerging: boolean;
+  maturity_stage: 'emerging' | 'growing' | 'mature' | 'declining' | 'unknown';
+  growth_rate: number;
+}
+
+export interface TrendAnalysis {
+  project_id: string;
+  total_patents: number;
+  filing_velocity: FilingVelocityPoint[];
+  forecast: ForecastPoint[];
+  area_trends: AreaTrend[];
+  emerging_technologies: AreaTrend[];
+  mature_technologies: AreaTrend[];
+}
+
 class AnalyticsApiService extends ApiClient {
   // Projects
   async getProjects(): Promise<ApiResponse<AnalyticsProject[]>> {
@@ -801,6 +919,32 @@ class AnalyticsApiService extends ApiClient {
         search_params: searchParams,
         application_numbers: applicationNumbers,
       }),
+    });
+  }
+
+  // Advanced Analytics
+  async analyzeLandscape(projectId: string): Promise<ApiResponse<LandscapeAnalysis>> {
+    return this.fetchWithAuth<LandscapeAnalysis>(`/analytics/api/projects/${projectId}/analyze_landscape/`, {
+      method: 'POST',
+    });
+  }
+
+  async runFtoAnalysis(projectId: string, targetDescription?: string): Promise<ApiResponse<FtoAnalysis>> {
+    return this.fetchWithAuth<FtoAnalysis>(`/analytics/api/projects/${projectId}/run_fto/`, {
+      method: 'POST',
+      body: JSON.stringify({ target_description: targetDescription }),
+    });
+  }
+
+  async findWhiteSpace(projectId: string): Promise<ApiResponse<WhiteSpaceAnalysis>> {
+    return this.fetchWithAuth<WhiteSpaceAnalysis>(`/analytics/api/projects/${projectId}/find_white_space/`, {
+      method: 'POST',
+    });
+  }
+
+  async forecastTrends(projectId: string): Promise<ApiResponse<TrendAnalysis>> {
+    return this.fetchWithAuth<TrendAnalysis>(`/analytics/api/projects/${projectId}/forecast_trends/`, {
+      method: 'POST',
     });
   }
 

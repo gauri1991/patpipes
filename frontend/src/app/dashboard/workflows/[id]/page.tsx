@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -38,6 +39,20 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { useWorkflow } from '@/hooks/useWorkflowData';
+
+// Dynamically import CommentThread with graceful fallback if it doesn't exist yet
+const CommentThread = dynamic(
+  () => import('@/components/collaboration/CommentThread').then(mod => mod.CommentThread),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="text-center py-8 text-muted-foreground">
+        <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+        <p>Loading comments...</p>
+      </div>
+    ),
+  }
+);
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -419,14 +434,99 @@ export default function WorkflowDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8 text-muted-foreground">
-                <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>Comments feature coming soon</p>
-              </div>
+              <CommentThreadWrapper
+                contentType="workflows.workflowinstance"
+                objectId={workflowId}
+              />
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Comments & Discussion Section (bottom of page) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="h-5 w-5" />
+            Comments & Discussion
+          </CardTitle>
+          <CardDescription>
+            Collaborate with team members on this workflow
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CommentThreadWrapper
+            contentType="workflows.workflowinstance"
+            objectId={workflowId}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
+}
+
+/**
+ * Wrapper that gracefully handles the case where CommentThread
+ * component doesn't exist yet (dynamic import will fail).
+ */
+function CommentThreadWrapper({
+  contentType,
+  objectId,
+}: {
+  contentType: string;
+  objectId: string;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+        <p>Comments feature coming soon</p>
+      </div>
+    );
+  }
+
+  return (
+    <ErrorBoundary onError={() => setHasError(true)}>
+      <Suspense
+        fallback={
+          <div className="text-center py-8 text-muted-foreground">
+            <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>Loading comments...</p>
+          </div>
+        }
+      >
+        <CommentThread contentType={contentType} objectId={objectId} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+/**
+ * Simple error boundary component for catching dynamic import failures.
+ */
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; onError: () => void },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; onError: () => void }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch() {
+    this.props.onError();
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return null;
+    }
+    return this.props.children;
+  }
 }

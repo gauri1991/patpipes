@@ -145,10 +145,14 @@ export default function WorkflowsPage() {
     priority: priorityFilter || undefined
   });
 
-  const { 
-    analytics, 
-    loading: analyticsLoading 
+  const {
+    analytics,
+    loading: analyticsLoading,
+    error: analyticsError
   } = useWorkflowAnalytics();
+
+  // Whether we're showing demo data (any hook errored -> mock fallback)
+  const isUsingDemoData = !!(workflowsError || templatesError || analyticsError);
 
   // Action handlers
   const handleCreateWorkflow = useCallback(async () => {
@@ -208,11 +212,18 @@ export default function WorkflowsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Workflows</h1>
-          <p className="text-muted-foreground">
-            Manage process automation and quality control
-          </p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Workflows</h1>
+            <p className="text-muted-foreground">
+              Manage process automation and quality control
+            </p>
+          </div>
+          {isUsingDemoData && (
+            <Badge variant="outline" className="text-xs text-muted-foreground">
+              Demo Data
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <Button variant="outline">
