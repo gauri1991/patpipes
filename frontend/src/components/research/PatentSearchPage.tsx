@@ -39,7 +39,7 @@ export function PatentSearchPage({ projectId, sessionId }: PatentSearchPageProps
         filters: searchFilters,
         projectId,
         sessionId
-      });
+      } as any);
       
       if (execution) {
         setCurrentExecutionId(execution.id);
@@ -79,7 +79,7 @@ export function PatentSearchPage({ projectId, sessionId }: PatentSearchPageProps
                 <div className="flex items-center gap-2 mt-1">
                   <Badge variant="outline">Project: {projectId}</Badge>
                   {sessionId && <Badge variant="secondary">Session: {sessionId}</Badge>}
-                  {searchState.hasResults && (
+                  {searchState.results && searchState.results.length > 0 && (
                     <Badge variant="default">{searchState.totalResults.toLocaleString()} results</Badge>
                   )}
                 </div>

@@ -3,6 +3,7 @@
  * Handles various export formats for patent data
  */
 
+// @ts-expect-error jspdf types not installed
 import { jsPDF } from 'jspdf';
 
 export interface ExportOptions {
@@ -24,7 +25,7 @@ export class BulkExporter {
     return `"${str}"`;
   }
 
-  static exportToCSV(patents: any[], options: ExportOptions = {}): Blob {
+  static exportToCSV(patents: any[], options: Partial<ExportOptions> = {}): Blob {
     const headers = [
       'Patent Number',
       'Title',
@@ -77,7 +78,7 @@ export class BulkExporter {
     return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   }
 
-  static exportToJSON(patents: any[], options: ExportOptions = {}): Blob {
+  static exportToJSON(patents: any[], options: Partial<ExportOptions> = {}): Blob {
     const exportData = {
       metadata: {
         exportedAt: new Date().toISOString(),
@@ -120,7 +121,7 @@ export class BulkExporter {
     return new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
   }
 
-  static exportToPDF(patents: any[], options: ExportOptions = {}): Blob {
+  static exportToPDF(patents: any[], options: Partial<ExportOptions> = {}): Blob {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
     const margin = 20;
@@ -192,7 +193,7 @@ export class BulkExporter {
     return doc.output('blob');
   }
 
-  static exportToXML(patents: any[], options: ExportOptions = {}): Blob {
+  static exportToXML(patents: any[], options: Partial<ExportOptions> = {}): Blob {
     const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>\n';
     const rootOpen = '<patents>\n';
     const rootClose = '</patents>';
@@ -252,7 +253,7 @@ export class BulkExporter {
   static async bulkExport(
     patents: any[], 
     format: ExportOptions['format'], 
-    options: ExportOptions = {}
+    options: Partial<ExportOptions> = {}
   ): Promise<void> {
     let blob: Blob;
     let filename: string;

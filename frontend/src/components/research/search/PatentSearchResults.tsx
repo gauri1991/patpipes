@@ -92,10 +92,10 @@ export function PatentSearchResults({
               <Button 
                 size="sm" 
                 variant="outline"
-                disabled={!searchState.hasResults}
+                disabled={searchState.results.length === 0}
                 onClick={() => {
                   // Export functionality - will be implemented
-                  if (searchState.hasResults) {
+                  if (searchState.results.length > 0) {
                     const csvData = searchState.results.map(patent => ({
                       patent_number: patent.patent_number,
                       title: patent.title,
@@ -186,7 +186,7 @@ export function PatentSearchResults({
           )}
 
           {/* Results Display */}
-          {!searchState.isSearching && !searchState.error && searchState.hasResults && (
+          {!searchState.isSearching && !searchState.error && searchState.results.length > 0 && (
             <>
               {viewMode === 'grid' && (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -234,7 +234,7 @@ export function PatentSearchResults({
           )}
 
           {/* Empty State */}
-          {!searchState.isSearching && !searchState.error && !searchState.hasResults && (
+          {!searchState.isSearching && !searchState.error && searchState.results.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
               <FileText className="h-12 w-12 mx-auto mb-4" />
               <p>No search results found</p>

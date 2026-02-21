@@ -252,7 +252,7 @@ export function QueryResultsViewer({
       keywords: patent.keywords || ''
     }));
     
-    setAllResults(prev => [...prev, ...newResults]);
+    setAllResults((prev: ResearchResult[]) => [...prev, ...(newResults as unknown as ResearchResult[])]);
   };
 
   const handleSendSelectedToClassifier = () => {
@@ -450,16 +450,16 @@ export function QueryResultsViewer({
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => {
-                                    const convertedPatent: ResearchResult = {
+                                    const convertedPatent = {
                                       id: patent.id,
-                                      query_id: 'imported',
-                                      source: 'import',
+                                      query: 'imported',
                                       patent_id: patent.patent_id,
                                       title: patent.title,
                                       abstract: patent.abstract,
                                       publication_date: patent.publication_date,
                                       application_date: patent.application_date,
                                       publication_number: patent.patent_id,
+                                      application_number: '',
                                       assignee: patent.assignee,
                                       inventors: patent.inventors,
                                       ipc_classes: patent.ipc_classes,
@@ -469,10 +469,8 @@ export function QueryResultsViewer({
                                       manual_relevance: patent.manual_relevance,
                                       relevance_score: patent.relevance_score,
                                       priority_date: null,
-                                      family_id: '',
-                                      citations: [],
-                                      keywords: ''
-                                    };
+                                      processed_at: ''
+                                    } as ResearchResult;
                                     setViewingPatent(convertedPatent);
                                   }}
                                 >
@@ -492,14 +490,14 @@ export function QueryResultsViewer({
                                 .filter(p => p.is_selected)
                                 .map(patent => ({
                                   id: patent.id,
-                                  query_id: 'imported',
-                                  source: 'import',
+                                  query: 'imported',
                                   patent_id: patent.patent_id,
                                   title: patent.title,
                                   abstract: patent.abstract,
                                   publication_date: patent.publication_date,
                                   application_date: patent.application_date,
                                   publication_number: patent.patent_id,
+                                  application_number: '',
                                   assignee: patent.assignee,
                                   inventors: patent.inventors,
                                   ipc_classes: patent.ipc_classes,
@@ -509,11 +507,9 @@ export function QueryResultsViewer({
                                   manual_relevance: patent.manual_relevance,
                                   relevance_score: patent.relevance_score,
                                   priority_date: null,
-                                  family_id: '',
-                                  citations: [],
-                                  keywords: ''
-                                }));
-                              
+                                  processed_at: ''
+                                } as ResearchResult));
+
                               if (selectedPatents.length > 0 && onSendToClassifier) {
                                 onSendToClassifier(selectedPatents);
                               }

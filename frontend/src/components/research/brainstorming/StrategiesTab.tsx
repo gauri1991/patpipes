@@ -86,7 +86,7 @@ export function StrategiesTab({ projectId, sessionId }: StrategiesTabProps) {
     complexity: 'medium' as SearchStrategy['complexity']
   });
 
-  const strategyTemplates = [
+  const strategyTemplates: { type: SearchStrategy['type']; name: string; icon: any; description: string; steps: number; time: string; color: string }[] = [
     {
       type: 'fto',
       name: 'Freedom-to-Operate Analysis',

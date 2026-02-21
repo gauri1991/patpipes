@@ -408,6 +408,10 @@ export type DatabaseType = 'uspto' | 'epo' | 'wipo' | 'jpo' | 'sipo' | 'espacene
 export type QueryType = 'boolean' | 'semantic' | 'hybrid' | 'classification';
 export type ExportFormat = 'csv' | 'excel' | 'json' | 'pdf' | 'xml';
 
+// Compatibility aliases used by QueryResultsViewer
+export type ResearchQuery = SearchQuery;
+export type ResearchResult = PatentRecord;
+
 // ===== HOOK RETURN TYPES =====
 
 export interface UsePatentSearchReturn {

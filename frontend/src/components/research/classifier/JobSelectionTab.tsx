@@ -807,10 +807,9 @@ Focus on practical implications and strategic guidance that I can present to sta
                   <div className="flex items-center gap-2">
                     <FileText className="h-3 w-3 text-muted-foreground" />
                     <span className="text-xs text-muted-foreground">Free-form</span>
-                    <Switch 
+                    <Switch
                       checked={isContextStructured}
                       onCheckedChange={setIsContextStructured}
-                      size="sm"
                     />
                     <span className="text-xs text-muted-foreground">Structured</span>
                     <Layers className="h-3 w-3 text-muted-foreground" />
@@ -940,10 +939,9 @@ Examples:
                   <div className="flex items-center gap-2">
                     <FileText className="h-3 w-3 text-muted-foreground" />
                     <span className="text-xs text-muted-foreground">Free-form</span>
-                    <Switch 
+                    <Switch
                       checked={isDeliverablesStructured}
                       onCheckedChange={setIsDeliverablesStructured}
-                      size="sm"
                     />
                     <span className="text-xs text-muted-foreground">Structured</span>
                     <Layers className="h-3 w-3 text-muted-foreground" />
@@ -1085,11 +1083,16 @@ Examples:
                 onClick={() => {
                   if (isEditMode && editingJob) {
                     // Handle edited job submission
+                    const depthToIntensity: Record<string, 'light' | 'standard' | 'deep'> = {
+                      quick: 'light',
+                      balanced: 'standard',
+                      deep: 'deep'
+                    };
                     const submission: JobSubmission = {
                       templateId: editingJob.id,
                       datasetIds: selectedDatasetIds,
                       projectId: 'current-project',
-                      intensity: analysisDepth,
+                      intensity: depthToIntensity[analysisDepth] || 'standard',
                       inputs: {},
                       outputFormats: ['visualization', 'report']
                     };

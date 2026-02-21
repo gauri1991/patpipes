@@ -28,7 +28,7 @@ import { createClusteringAgent } from './agents/ClusteringAgent';
  * Main service class for the Agentic Patent Discovery System
  */
 export class AgenticPatentDiscoveryService {
-  private orchestrator: PipelineOrchestrator;
+  private orchestrator!: PipelineOrchestrator;
   private config: PipelineConfig;
   private initialized = false;
 

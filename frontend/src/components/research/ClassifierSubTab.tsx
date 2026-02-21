@@ -97,7 +97,7 @@ export function ClassifierSubTab({ projectId, queries = [], results = [], import
           }));
           setPatents(transformedRecords);
           // Auto-select all dataset records
-          setSelectedPatents(transformedRecords.map(p => p.id));
+          setSelectedPatents(transformedRecords.map((p: any) => p.id));
           // Clear sessionStorage after loading
           sessionStorage.removeItem('classifierDataset');
           return; // Exit early if dataset data was found

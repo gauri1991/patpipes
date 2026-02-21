@@ -65,8 +65,9 @@ export function TechnologyLandscapeMap({
     return <Badge variant={variants[opportunity as keyof typeof variants]}>{opportunity} opportunity</Badge>;
   };
 
-  const formatTooltip = (value: any, name: string, props: any) => {
-    const data = props.payload;
+  const formatTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const data = payload[0].payload;
     return (
       <div className="bg-white p-3 border rounded-lg shadow-lg">
         <p className="font-semibold text-lg">{data.name}</p>

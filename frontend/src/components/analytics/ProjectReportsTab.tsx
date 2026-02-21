@@ -209,7 +209,24 @@ export function ProjectReportsTab({ projectId, project }: ProjectReportsTabProps
   const [selectedTemplate, setSelectedTemplate] = useState<ReportTemplate | null>(null);
   const [reportName, setReportName] = useState('');
   const [reportDescription, setReportDescription] = useState('');
-  const [projectReports, setProjectReports] = useState(mockProjectReports);
+  const [projectReports, setProjectReports] = useState<Array<{
+    id: string;
+    name: string;
+    type: string;
+    status: string;
+    template_id: string;
+    created_at: string;
+    updated_at: string;
+    created_by: { name: string; avatar: string };
+    progress: number;
+    sections_completed: number;
+    total_sections: number;
+    file_size: string | null;
+    format: string | null;
+    review_status: string | null;
+    reviewer: { name: string; role: string } | null;
+    review_comments: string | null;
+  }>>(mockProjectReports);
   const [showReportEditor, setShowReportEditor] = useState(false);
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [showReviewDialog, setShowReviewDialog] = useState(false);
@@ -428,7 +445,7 @@ export function ProjectReportsTab({ projectId, project }: ProjectReportsTabProps
                           <div className="flex items-start justify-between">
                             <div className="flex items-center gap-3">
                               <div className="p-2 bg-gradient-to-br from-blue-100 to-purple-100 rounded-lg">
-                                <template.icon className="h-5 w-5 text-blue-600" />
+                                {(() => { const Icon = getReportTypeIcon(template.template_type); return <Icon className="h-5 w-5 text-blue-600" />; })()}
                               </div>
                               <div>
                                 <CardTitle className="text-base">{template.name}</CardTitle>
@@ -514,15 +531,15 @@ export function ProjectReportsTab({ projectId, project }: ProjectReportsTabProps
                         <Card 
                           key={template.id}
                           className={`cursor-pointer transition-all ${
-                            selectedTemplate?.id === template.id 
-                              ? 'ring-2 ring-blue-500' 
+                            (selectedTemplate as ReportTemplate | null)?.id === template.id
+                              ? 'ring-2 ring-blue-500'
                               : 'hover:shadow-sm'
                           }`}
                           onClick={() => setSelectedTemplate(template)}
                         >
                           <CardHeader className="p-3">
                             <div className="flex items-center gap-2">
-                              <template.icon className="h-4 w-4 text-muted-foreground" />
+                              {(() => { const Icon = getReportTypeIcon(template.template_type); return <Icon className="h-4 w-4 text-muted-foreground" />; })()}
                               <span className="text-sm font-medium">{template.name}</span>
                             </div>
                           </CardHeader>
@@ -1133,7 +1150,7 @@ export function ProjectReportsTab({ projectId, project }: ProjectReportsTabProps
           reportId={reviewingReportId}
           reportName={projectReports.find(r => r.id === reviewingReportId)?.name || 'Report'}
           currentStatus={projectReports.find(r => r.id === reviewingReportId)?.review_status || 'pending_approval'}
-          currentReviewer={projectReports.find(r => r.id === reviewingReportId)?.reviewer}
+          currentReviewer={projectReports.find(r => r.id === reviewingReportId)?.reviewer ?? undefined}
           onWorkflowAction={handleWorkflowAction}
         />
       )}

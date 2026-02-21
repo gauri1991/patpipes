@@ -234,9 +234,9 @@ export class GraphBuilderAgent extends BaseAgent {
    * Add structural edges based on semantic relationships
    */
   private addStructuralEdges(edges: GraphEdge[], nodes: GraphNode[]): void {
-    const componentNodes = nodes.filter(n => n.type === 'COMPONENT');
-    const processNodes = nodes.filter(n => n.type === 'PROCESS');
-    const systemNodes = nodes.filter(n => n.type === 'SYSTEM');
+    const componentNodes = nodes.filter(n => (n.type as string) === 'COMPONENT' || n.type === EntityType.COMPONENT);
+    const processNodes = nodes.filter(n => (n.type as string) === 'PROCESS' || n.type === EntityType.PROCESS);
+    const systemNodes = nodes.filter(n => (n.type as string) === 'SYSTEM' || n.type === EntityType.SYSTEM);
     
     // Create component-process relationships
     componentNodes.forEach(comp => {

@@ -461,7 +461,7 @@ export function ProjectDashboard({ projectId }: ProjectDashboardProps) {
           <WorkflowIntegration 
             projectId={projectId} 
             projectName={currentProject.name}
-            projectType={currentProject.projectType || 'standard'}
+            projectType={currentProject.type || 'standard'}
           />
         </TabsContent>
 

@@ -169,7 +169,7 @@ export function PriorArtResearchTab({ project, onProceedToSearch }: PriorArtRese
             <TabsContent value="claim-analysis" className="space-y-6">
               <ClaimAnalysisTab
                 project={project}
-                onProgressUpdate={handleTabProgress}
+                onProgressUpdate={(progress) => handleTabProgress('claimAnalysis', progress)}
                 onDataUpdate={(data) => handleDataUpdate('claimAnalysis', data)}
               />
             </TabsContent>
@@ -178,7 +178,7 @@ export function PriorArtResearchTab({ project, onProceedToSearch }: PriorArtRese
               <PatentTextAnalyzerTab
                 project={project}
                 claimData={researchData.claimAnalysis}
-                onProgressUpdate={handleTabProgress}
+                onProgressUpdate={(progress) => handleTabProgress('textAnalysis', progress)}
                 onDataUpdate={(data) => handleDataUpdate('textAnalysis', data)}
               />
             </TabsContent>
@@ -188,7 +188,7 @@ export function PriorArtResearchTab({ project, onProceedToSearch }: PriorArtRese
                 project={project}
                 claimData={researchData.claimAnalysis}
                 textData={researchData.textAnalysis}
-                onProgressUpdate={handleTabProgress}
+                onProgressUpdate={(progress) => handleTabProgress('keywords', progress)}
                 onDataUpdate={(data) => handleDataUpdate('keywords', data)}
               />
             </TabsContent>
@@ -197,7 +197,7 @@ export function PriorArtResearchTab({ project, onProceedToSearch }: PriorArtRese
               <ClassificationsTab
                 project={project}
                 conceptData={researchData.textAnalysis}
-                onProgressUpdate={handleTabProgress}
+                onProgressUpdate={(progress) => handleTabProgress('classifications', progress)}
                 onDataUpdate={(data) => handleDataUpdate('classifications', data)}
               />
             </TabsContent>
@@ -219,7 +219,7 @@ export function PriorArtResearchTab({ project, onProceedToSearch }: PriorArtRese
               <SearchStrategyTab
                 project={project}
                 researchData={researchData}
-                onProgressUpdate={handleTabProgress}
+                onProgressUpdate={(progress) => handleTabProgress('strategy', progress)}
                 onDataUpdate={(data) => handleDataUpdate('strategy', data)}
                 onProceedToSearch={handleProceedToSearch}
               />

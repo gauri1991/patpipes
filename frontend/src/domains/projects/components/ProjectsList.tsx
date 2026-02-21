@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 import { useProjectsStore } from '../store/projects.store';
-import { Project, ProjectStatus, ProjectPriority, ProjectType } from '../types/project.types';
+import { Project, ProjectStatus, ProjectPriority, ProjectTypeId } from '../types/project.types';
 import { ProjectFilters } from './ProjectFilters';
 import { ProjectStatusBadge } from './ProjectStatusBadge';
 import { ProjectPriorityBadge } from './ProjectPriorityBadge';
@@ -107,16 +107,16 @@ export function ProjectsList() {
     });
   };
 
-  const getProjectTypeColor = (type: ProjectType) => {
-    const colors = {
-      [ProjectType.UTILITY_PATENT]: 'bg-blue-100 text-blue-800',
-      [ProjectType.DESIGN_PATENT]: 'bg-purple-100 text-purple-800',
-      [ProjectType.PROVISIONAL_PATENT]: 'bg-green-100 text-green-800',
-      [ProjectType.TRADEMARK]: 'bg-orange-100 text-orange-800',
-      [ProjectType.COPYRIGHT]: 'bg-pink-100 text-pink-800',
-      [ProjectType.TRADE_SECRET]: 'bg-gray-100 text-gray-800',
-      [ProjectType.LICENSING]: 'bg-yellow-100 text-yellow-800',
-      [ProjectType.IP_AUDIT]: 'bg-indigo-100 text-indigo-800',
+  const getProjectTypeColor = (type: string) => {
+    const colors: Record<string, string> = {
+      [ProjectTypeId.UTILITY_PATENT]: 'bg-blue-100 text-blue-800',
+      [ProjectTypeId.DESIGN_PATENT]: 'bg-purple-100 text-purple-800',
+      [ProjectTypeId.PROVISIONAL_PATENT]: 'bg-green-100 text-green-800',
+      [ProjectTypeId.TRADEMARK]: 'bg-orange-100 text-orange-800',
+      [ProjectTypeId.COPYRIGHT]: 'bg-pink-100 text-pink-800',
+      [ProjectTypeId.TRADE_SECRET]: 'bg-gray-100 text-gray-800',
+      [ProjectTypeId.LICENSING]: 'bg-yellow-100 text-yellow-800',
+      [ProjectTypeId.IP_AUDIT]: 'bg-indigo-100 text-indigo-800',
     };
     return colors[type] || 'bg-gray-100 text-gray-800';
   };

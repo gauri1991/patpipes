@@ -267,6 +267,7 @@ class TemplateService {
       if (!response.ok) {
         // Return mock stats if endpoint doesn't exist
         return {
+          template_id: id,
           total_uses: 0,
           unique_users: 0,
           last_used: new Date().toISOString(),

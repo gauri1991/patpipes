@@ -283,7 +283,7 @@ export function ComprehensiveTemplatesTab() {
     } else if (template.template_type === TemplateType.DOCUMENT) {
       toast.info(`Using ${getTypeLabel(template.template_type)} template: ${template.name}`);
     } else {
-      toast.info(`Using ${getTypeLabel(template.template_type)} template: ${template.name}`);
+      toast.info(`Using ${getTypeLabel((template as Template).template_type)} template: ${(template as Template).name}`);
     }
   };
 

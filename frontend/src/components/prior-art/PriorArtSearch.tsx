@@ -44,7 +44,7 @@ interface PriorArtSearchProps {
 }
 
 // Search templates based on project type
-const SEARCH_TEMPLATES = {
+const SEARCH_TEMPLATES: Record<string, any[]> = {
   [PriorArtProjectType.FTO]: [
     {
       id: 'fto_broad',

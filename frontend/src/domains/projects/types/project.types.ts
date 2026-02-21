@@ -42,6 +42,18 @@ export interface ProjectType {
   icon?: string;
 }
 
+// String enum for type IDs used in UI filters and color maps
+export enum ProjectTypeId {
+  UTILITY_PATENT = 'utility_patent',
+  DESIGN_PATENT = 'design_patent',
+  PROVISIONAL_PATENT = 'provisional_patent',
+  TRADEMARK = 'trademark',
+  COPYRIGHT = 'copyright',
+  TRADE_SECRET = 'trade_secret',
+  LICENSING = 'licensing',
+  IP_AUDIT = 'ip_audit',
+}
+
 // Task Status Enum
 export enum TaskStatus {
   TODO = 'todo',
@@ -70,6 +82,7 @@ export interface Project {
   name: string;
   description?: string;
   type: string; // Project type ID
+  projectType?: string;
   status: ProjectStatus;
   priority: ProjectPriority;
   clientName?: string;
@@ -167,7 +180,11 @@ export interface ProjectTask {
   
   // Progress
   progressPercentage: number;
-  
+
+  // Counts (optional, used in Kanban views)
+  commentsCount?: number;
+  attachmentsCount?: number;
+
   // Timestamps
   createdAt: Date;
   updatedAt: Date;

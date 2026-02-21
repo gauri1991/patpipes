@@ -205,12 +205,12 @@ export function JobSubmissionsList({ projectId, newSubmission }: JobSubmissionsL
                         <div className="text-sm">
                           <strong>Intensity:</strong> {submission.submission.intensity}
                         </div>
-                        {submission.submission.customPrompt && (
+                        {(submission.submission as any)?.customPrompt && (
                           <div className="text-sm">
                             <strong>Custom Instructions:</strong>
                             <p className="text-muted-foreground mt-1">
-                              {submission.submission.customPrompt.slice(0, 200)}
-                              {submission.submission.customPrompt.length > 200 && '...'}
+                              {(submission.submission as any).customPrompt.slice(0, 200)}
+                              {(submission.submission as any).customPrompt.length > 200 && '...'}
                             </p>
                           </div>
                         )}

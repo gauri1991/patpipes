@@ -189,9 +189,9 @@ export default function InsightsPage() {
     try {
       const data = {
         title: formData.title,
-        insight_type: formData.insight_type,
+        insight_type: formData.insight_type as AnalyticsInsight['insight_type'],
         description: formData.description,
-        priority: formData.priority,
+        priority: formData.priority as AnalyticsInsight['priority'],
         is_actionable: formData.is_actionable,
         recommended_actions: formData.recommended_actions.split('\n').map(a => a.trim()).filter(a => a),
         confidence_level: 'medium' as const,

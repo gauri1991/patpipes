@@ -176,7 +176,7 @@ export function DatasetsTab({ projectId, datasets, onDatasetsChange }: DatasetsT
     }
   };
 
-  const handleCreateDataset = async (data: PatentDatasetCreateData) => {
+  const handleCreateDataset = async (data: Omit<PatentDatasetCreateData, 'project'>) => {
     try {
       setLoading(true);
       setIsUploading(true);
@@ -314,7 +314,7 @@ export function DatasetsTab({ projectId, datasets, onDatasetsChange }: DatasetsT
       datasetId: dataset.id,
       datasetName: dataset.name,
       projectId: projectId,
-      records: dataset.records || []
+      records: (dataset as any).records || []
     }));
 
     // Navigate to classifier tab
@@ -698,7 +698,7 @@ export function DatasetsTab({ projectId, datasets, onDatasetsChange }: DatasetsT
 
 // Create Dataset Dialog Component
 function CreateDatasetDialog({ onSubmit, loading, uploadProgress, isUploading }: {
-  onSubmit: (data: PatentDatasetCreateData) => void;
+  onSubmit: (data: Omit<PatentDatasetCreateData, 'project'>) => void;
   loading: boolean;
   uploadProgress: number;
   isUploading: boolean;
@@ -725,7 +725,7 @@ function CreateDatasetDialog({ onSubmit, loading, uploadProgress, isUploading }:
 
   const handleSubmit = () => {
     if (formData.name.trim() && !fileError) {
-      onSubmit(formData);
+      onSubmit({ ...formData, data_file: formData.data_file ?? undefined });
       setFormData({
         name: '',
         description: '',

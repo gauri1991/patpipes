@@ -390,7 +390,7 @@ export function PriorArtAnalyzer({
                           <div>
                             <span className="font-medium">Freedom to Operate:</span>
                             <div className="flex items-center gap-1 mt-1">
-                              <Badge className={getRiskColor(analysis.analysis.freedom_to_operate.risk_level)} size="sm">
+                              <Badge className={`${getRiskColor(analysis.analysis.freedom_to_operate.risk_level)} text-xs`}>
                                 {analysis.analysis.freedom_to_operate.risk_level}
                               </Badge>
                               <span className="text-muted-foreground">

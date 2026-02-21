@@ -90,7 +90,7 @@ export function ColumnMappingRulesManager() {
         status: filterStatus === 'all' ? undefined : filterStatus
       });
       // Handle paginated response format {results: [...]}
-      const rulesArray = data?.results || data || [];
+      const rulesArray = (data as any)?.results || data || [];
       setRules(Array.isArray(rulesArray) ? rulesArray : []);
     } catch (error) {
       console.error('Failed to load mapping rules:', error);

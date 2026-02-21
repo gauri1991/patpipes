@@ -163,7 +163,7 @@ class AuthService {
     this.refreshPromise = this.api
       .post('/auth/refresh/', { refresh: refreshToken })
       .then((response) => {
-        const tokens = {
+        const tokens: AuthTokens = {
           accessToken: response.data.access,
           refreshToken: response.data.refresh || refreshToken,
           expiresIn: response.data.expiresIn || 3600,
@@ -176,7 +176,7 @@ class AuthService {
         this.refreshPromise = null;
       });
 
-    return this.refreshPromise;
+    return this.refreshPromise!;
   }
 
   /**

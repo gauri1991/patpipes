@@ -32,13 +32,11 @@ const createProjectSchema = z.object({
   name: z.string().min(1, 'Project name is required').max(200, 'Project name is too long'),
   description: z.string().optional(),
   type: z.string().min(1, 'Project type is required'),
-  priority: z.nativeEnum(ProjectPriority, {
-    errorMap: () => ({ message: 'Priority is required' }),
-  }),
+  priority: z.nativeEnum(ProjectPriority),
   clientName: z.string().optional(),
   clientEmail: z.string().email('Invalid email address').optional().or(z.literal('')),
   budget: z.number().min(0).optional(),
-  currency: z.string().optional().default('USD'),
+  currency: z.string().optional(),
   startDate: z.date().optional(),
   targetDate: z.date().optional(),
 });

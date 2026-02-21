@@ -21,7 +21,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 
 import { useProjectsStore } from '../store/projects.store';
-import { ProjectStatus, ProjectPriority, ProjectType } from '../types/project.types';
+import { ProjectStatus, ProjectPriority, ProjectTypeId } from '../types/project.types';
 
 export function ProjectFilters() {
   const { filters, setFilters, clearFilters, fetchProjects } = useProjectsStore();
@@ -56,7 +56,7 @@ export function ProjectFilters() {
     }
   };
 
-  const handleTypeChange = (type: ProjectType, checked: boolean) => {
+  const handleTypeChange = (type: string, checked: boolean) => {
     const currentTypes = localFilters.type || [];
     if (checked) {
       updateFilter('type', [...currentTypes, type]);
@@ -87,14 +87,14 @@ export function ProjectFilters() {
   ];
 
   const typeOptions = [
-    { value: ProjectType.UTILITY_PATENT, label: 'Utility Patent' },
-    { value: ProjectType.DESIGN_PATENT, label: 'Design Patent' },
-    { value: ProjectType.PROVISIONAL_PATENT, label: 'Provisional Patent' },
-    { value: ProjectType.TRADEMARK, label: 'Trademark' },
-    { value: ProjectType.COPYRIGHT, label: 'Copyright' },
-    { value: ProjectType.TRADE_SECRET, label: 'Trade Secret' },
-    { value: ProjectType.LICENSING, label: 'Licensing' },
-    { value: ProjectType.IP_AUDIT, label: 'IP Audit' },
+    { value: ProjectTypeId.UTILITY_PATENT, label: 'Utility Patent' },
+    { value: ProjectTypeId.DESIGN_PATENT, label: 'Design Patent' },
+    { value: ProjectTypeId.PROVISIONAL_PATENT, label: 'Provisional Patent' },
+    { value: ProjectTypeId.TRADEMARK, label: 'Trademark' },
+    { value: ProjectTypeId.COPYRIGHT, label: 'Copyright' },
+    { value: ProjectTypeId.TRADE_SECRET, label: 'Trade Secret' },
+    { value: ProjectTypeId.LICENSING, label: 'Licensing' },
+    { value: ProjectTypeId.IP_AUDIT, label: 'IP Audit' },
   ];
 
   const priorityOptions = [

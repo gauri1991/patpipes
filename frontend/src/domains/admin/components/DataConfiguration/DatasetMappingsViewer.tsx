@@ -105,7 +105,7 @@ export function DatasetMappingsViewer() {
         search: searchTerm || undefined
       });
       // Handle paginated response format {results: [...]}
-      const mappingsArray = data?.results || data || [];
+      const mappingsArray = (data as any)?.results || data || [];
       setMappings(Array.isArray(mappingsArray) ? mappingsArray : []);
     } catch (error) {
       console.error('Failed to load dataset mappings:', error);

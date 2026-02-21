@@ -96,7 +96,7 @@ export function SearchStrategyTab({
     timeEstimate: '2-3 weeks'
   });
   
-  const [databases] = useState<SearchDatabase[]>([
+  const [databases, setDatabases] = useState<SearchDatabase[]>([
     {
       id: 'patent-db',
       name: 'Patent Databases',

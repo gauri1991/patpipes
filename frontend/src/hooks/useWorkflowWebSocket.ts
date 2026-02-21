@@ -145,7 +145,7 @@ export function useWorkflowWebSocket(options: UseWorkflowWebSocketOptions): UseW
         }, 30000); // Ping every 30 seconds
 
         // Request initial workflow state
-        wsRef.current.send(JSON.stringify({ type: 'request_workflow_state' }));
+        wsRef.current?.send(JSON.stringify({ type: 'request_workflow_state' }));
       };
 
       wsRef.current.onmessage = (event) => {
@@ -393,7 +393,7 @@ export function useWorkflowAnalyticsWebSocket(options: UseWorkflowAnalyticsWebSo
         }, 30000);
 
         // Request initial analytics data
-        wsRef.current.send(JSON.stringify({ type: 'request_analytics' }));
+        wsRef.current?.send(JSON.stringify({ type: 'request_analytics' }));
       };
 
       wsRef.current.onmessage = (event) => {

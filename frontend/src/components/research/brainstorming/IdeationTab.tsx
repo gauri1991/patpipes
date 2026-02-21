@@ -47,7 +47,13 @@ export function IdeationTab({ projectId, sessionId }: IdeationTabProps) {
     loading,
     error
   } = useBrainstorming(projectId);
-  const [currentIdea, setCurrentIdea] = useState({
+  const [currentIdea, setCurrentIdea] = useState<{
+    title: string;
+    description: string;
+    idea_type: string;
+    tags: string[];
+    priority: string;
+  }>({
     title: '',
     description: '',
     idea_type: 'concept',
@@ -189,18 +195,13 @@ export function IdeationTab({ projectId, sessionId }: IdeationTabProps) {
               className="flex-1"
               onKeyPress={(e) => {
                 if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                  setIdeas([{
-                    id: Date.now().toString(),
+                  createIdea({
                     title: e.currentTarget.value,
                     description: '',
-                    type: 'concept',
+                    idea_type: 'concept',
                     tags: [],
-                    priority: 'medium',
-                    isPinned: false,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
-                    status: 'active'
-                  }, ...ideas]);
+                    priority: 'medium'
+                  });
                   e.currentTarget.value = '';
                 }
               }}
@@ -282,8 +283,8 @@ export function IdeationTab({ projectId, sessionId }: IdeationTabProps) {
                 <div className="space-y-2">
                   <Label>Type</Label>
                   <Select
-                    value={currentIdea.type}
-                    onValueChange={(value: any) => setCurrentIdea({ ...currentIdea, type: value })}
+                    value={currentIdea.idea_type}
+                    onValueChange={(value: any) => setCurrentIdea({ ...currentIdea, idea_type: value })}
                   >
                     <SelectTrigger>
                       <SelectValue />

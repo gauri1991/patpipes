@@ -22,11 +22,11 @@ export function useClaims({ applicationId, onClaimsChange, onError }: UseClaimsO
   const loadClaims = useCallback(async () => {
     try {
       setIsLoading(true);
-      const claimsResponse = await prosecutionApi.getClaims(applicationId);
-      
+      const claimsResponse: any = await prosecutionApi.getClaims(applicationId);
+
       // Handle paginated response - extract results array
-      const claimsData = Array.isArray(claimsResponse) 
-        ? claimsResponse 
+      const claimsData = Array.isArray(claimsResponse)
+        ? claimsResponse
         : claimsResponse.results || [];
       
       setClaims(claimsData);
@@ -163,7 +163,7 @@ export function useClaims({ applicationId, onClaimsChange, onError }: UseClaimsO
 
       claimLines.forEach(line => {
         const trimmed = line.trim();
-        const match = trimmed.match(/^(\d+)\.\s*(.+)/s);
+        const match = trimmed.match(/^(\d+)\.\s*([\s\S]+)/);
         
         if (match) {
           const claimNumber = parseInt(match[1]);

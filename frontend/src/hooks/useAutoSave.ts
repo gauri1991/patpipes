@@ -25,7 +25,7 @@ export function useAutoSave(
 
   const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pendingDataRef = useRef<UpdatePatentApplicationData>({});
   const isSavingRef = useRef(false);
 

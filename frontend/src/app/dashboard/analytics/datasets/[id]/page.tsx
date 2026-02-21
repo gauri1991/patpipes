@@ -75,7 +75,7 @@ export default function DatasetDetailPage() {
       const response = await analyticsApi.getDatasetRecords(datasetId, currentPage, pageSize);
 
       if (response.success && response.data) {
-        setRecords(response.data.records);
+        setRecords(response.data.records as PatentRecord[]);
         setTotalRecords(response.data.total_count);
       } else {
         throw new Error(response.error || 'Failed to fetch records');

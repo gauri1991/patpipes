@@ -122,7 +122,7 @@ interface ProjectsState {
   // Search and Filter Actions
   setFilters: (filters: Partial<ProjectFilters>) => void;
   setSearchQuery: (query: string) => void;
-  setSorting: (sortBy: typeof sortBy, sortOrder: 'asc' | 'desc') => void;
+  setSorting: (sortBy: 'name' | 'created' | 'updated' | 'priority' | 'status' | 'dueDate', sortOrder: 'asc' | 'desc') => void;
   setPage: (page: number) => void;
   clearFilters: () => void;
 

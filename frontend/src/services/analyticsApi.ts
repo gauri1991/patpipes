@@ -74,6 +74,7 @@ export interface PatentDataset {
   temporal_distribution: Record<string, number>;
   geographic_distribution: Record<string, number>;
   assignee_distribution: Record<string, number>;
+  records?: PatentRecord[];
   created_by: {
     id: string;
     firstName: string;
@@ -304,6 +305,12 @@ export interface ChartTemplate {
   name: string;
   description: string;
   category: string;
+}
+
+export interface ChartData {
+  type: string;
+  data: Record<string, any>;
+  [key: string]: any;
 }
 
 export interface ReportTemplate {

@@ -377,7 +377,7 @@ export class NormalizationAgent extends BaseAgent {
           confidence: 1.0, // Ontology matches are 100% confident
           source: 'ontology',
           synonyms,
-          hierarchicalParent
+          hierarchicalParent: hierarchicalParent ?? undefined
         });
       }
     });

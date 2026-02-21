@@ -102,19 +102,19 @@ export interface DocumentTemplate extends BaseTemplate {
   };
 }
 
-// Dashboard Template - for multi-widget dashboards (not used in analytics)
-// export interface DashboardTemplate extends BaseTemplate {
-//   template_type: TemplateType.DASHBOARD;
-//   dashboard_config: {
-//     layout: DashboardLayout;
-//     widgets: DashboardWidget[];
-//     refresh_interval?: number;
-//     filters?: DashboardFilter[];
-//     theme?: DashboardTheme;
-//     interactions?: WidgetInteraction[];
-//   };
-//   preview_image?: string;
-// }
+// Dashboard Template - for multi-widget dashboards
+export interface DashboardTemplate extends BaseTemplate {
+  template_type: TemplateType.DASHBOARD;
+  dashboard_config: {
+    layout: DashboardLayout;
+    widgets: DashboardWidget[];
+    refresh_interval?: number;
+    filters?: DashboardFilter[];
+    theme?: DashboardTheme;
+    interactions?: WidgetInteraction[];
+  };
+  preview_image?: string;
+}
 
 // Workflow Template - for process workflows (not used in analytics)
 // export interface WorkflowTemplate extends BaseTemplate {
@@ -127,8 +127,8 @@ export interface DocumentTemplate extends BaseTemplate {
 //   };
 // }
 
-// Union type for analytics template types only
-export type Template = ChartTemplate | ReportTemplate | DocumentTemplate;
+// Union type for analytics template types
+export type Template = ChartTemplate | ReportTemplate | DocumentTemplate | DashboardTemplate;
 
 // Chart specific types
 export enum ChartType {
@@ -406,6 +406,9 @@ export interface TemplateUsageStats {
   average_rating?: number;
   success_rate?: number;
   common_modifications?: string[];
+  usage_by_day?: Record<string, number>;
+  usage_by_user?: Record<string, number>;
+  modifications_frequency?: Record<string, number>;
 }
 
 export interface TemplateVersion {

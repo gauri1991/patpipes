@@ -292,7 +292,6 @@ export function ResearchTab({ projectId }: ResearchTabProps) {
             projectId={projectId}
             availableAPIs={availableAPIs}
             onQueryCreated={handleCreateQuery}
-            initialData={brainstormData}
           />
         </TabsContent>
 

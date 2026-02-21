@@ -577,7 +577,7 @@ export function AdvancedClassifierTab({
                             </div>
                             <div className="p-3 bg-orange-50 rounded-lg border text-center">
                               <div className="text-2xl font-bold text-orange-600">
-                                {Math.round(selectedResult.graphBuilder.knowledgeGraph.metadata.graphDensity * 100)}%
+                                {Math.round((selectedResult.graphBuilder?.knowledgeGraph?.metadata?.graphDensity ?? 0) * 100)}%
                               </div>
                               <div className="text-sm text-orange-800">Density</div>
                             </div>
@@ -589,8 +589,8 @@ export function AdvancedClassifierTab({
                               <h4 className="font-medium text-sm text-gray-700">Important Nodes</h4>
                               <ScrollArea className="h-48">
                                 <div className="space-y-2">
-                                  {selectedResult.graphBuilder.nodeImportances.slice(0, 10).map((importance, index) => {
-                                    const node = selectedResult.graphBuilder.knowledgeGraph.nodes.find(n => n.id === importance.nodeId);
+                                  {selectedResult.graphBuilder?.nodeImportances?.slice(0, 10).map((importance, index) => {
+                                    const node = selectedResult.graphBuilder?.knowledgeGraph?.nodes?.find(n => n.id === importance.nodeId);
                                     return (
                                       <div key={index} className="p-2 border rounded-lg space-y-1">
                                         <div className="flex items-center justify-between">
@@ -625,9 +625,9 @@ export function AdvancedClassifierTab({
                               <h4 className="font-medium text-sm text-gray-700">Graph Connections</h4>
                               <ScrollArea className="h-48">
                                 <div className="space-y-2">
-                                  {selectedResult.graphBuilder.knowledgeGraph.edges.slice(0, 10).map((edge: GraphEdge, index: number) => {
-                                    const sourceNode = selectedResult.graphBuilder.knowledgeGraph.nodes.find(n => n.id === edge.sourceId);
-                                    const targetNode = selectedResult.graphBuilder.knowledgeGraph.nodes.find(n => n.id === edge.targetId);
+                                  {selectedResult.graphBuilder?.knowledgeGraph?.edges?.slice(0, 10).map((edge: GraphEdge, index: number) => {
+                                    const sourceNode = selectedResult.graphBuilder?.knowledgeGraph?.nodes?.find(n => n.id === edge.sourceId);
+                                    const targetNode = selectedResult.graphBuilder?.knowledgeGraph?.nodes?.find(n => n.id === edge.targetId);
                                     return (
                                       <div key={index} className="p-2 border rounded-lg space-y-1">
                                         <div className="flex items-center justify-between">

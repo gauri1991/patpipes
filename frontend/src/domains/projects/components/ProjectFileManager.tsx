@@ -158,7 +158,7 @@ export function ProjectFileManager({ projectId }: ProjectFileManagerProps) {
     return `${fileSize.toFixed(1)} ${units[unitIndex]}`;
   };
 
-  const formatDate = (date: string) => {
+  const formatDate = (date: string | Date) => {
     return new Date(date).toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',

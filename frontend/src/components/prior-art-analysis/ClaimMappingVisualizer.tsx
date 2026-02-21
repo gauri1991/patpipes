@@ -356,7 +356,7 @@ export function ClaimMappingVisualizer({
           <Checkbox 
             id="show-all"
             checked={showAllElements}
-            onCheckedChange={setShowAllElements}
+            onCheckedChange={(checked) => setShowAllElements(checked === true)}
           />
           <label htmlFor="show-all" className="text-sm">Show all elements</label>
         </div>

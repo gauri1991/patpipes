@@ -130,7 +130,7 @@ export default function AttorneyProfilePage() {
     setSendingConnection(true);
     try {
       await attorneyApi.createConnection({
-        attorney: attorney.id,
+        attorney: attorney.id as any,
         connection_type: connectionType,
         message: connectionMessage,
         status: 'pending'

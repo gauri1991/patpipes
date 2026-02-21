@@ -10,6 +10,7 @@ import {
   Plus,
   Search,
   Filter,
+  Folder,
   MoreHorizontal,
   Shield,
   Lightbulb,

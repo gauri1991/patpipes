@@ -198,8 +198,8 @@ export function VisualizationsTab({ projectId, project }: VisualizationsTabProps
   const handleExportChart = async (visualization: AnalyticsVisualization, format: 'png' | 'svg' | 'pdf' = 'png') => {
     try {
       console.log(`Exporting ${visualization.title} as ${format}`);
-      const blob = await analyticsApi.exportChart(visualization.id, format);
-      
+      const blob = await analyticsApi.exportChart(visualization.id, format) as Blob;
+
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -614,7 +614,7 @@ export function VisualizationsTab({ projectId, project }: VisualizationsTabProps
                               onClick={() => handleViewFullscreen(visualization)}
                             >
                               <ChartRenderer 
-                                data={visualization.chart_data}
+                                data={visualization.chart_data as any}
                                 width={visualization.width}
                                 height={200}
                                 interactive={false}
@@ -718,8 +718,8 @@ export function VisualizationsTab({ projectId, project }: VisualizationsTabProps
                       </div>
                       {visualization.status === 'completed' && visualization.chart_data && (
                         <div className="w-48 border-l p-4 bg-gray-50">
-                          <ChartRenderer 
-                            data={visualization.chart_data}
+                          <ChartRenderer
+                            data={visualization.chart_data as any}
                             width={192}
                             height={120}
                             interactive={false}
@@ -930,7 +930,7 @@ export function VisualizationsTab({ projectId, project }: VisualizationsTabProps
                 <div className="h-full flex flex-col">
                   <div className="flex-1 min-h-0">
                     <ChartRenderer 
-                      data={fullscreenVisualization.chart_data}
+                      data={fullscreenVisualization.chart_data as any}
                       width={fullscreenVisualization.width}
                       height={600}
                       interactive={true}

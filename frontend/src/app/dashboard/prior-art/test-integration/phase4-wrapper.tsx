@@ -25,9 +25,8 @@ export function Phase4TestWrapper({ component, projectType = 'FTO' }: TestWrappe
       case 'evidence':
         return (
           <Card className="p-6">
-            <EvidenceStrengthAnalyzer 
+            <EvidenceStrengthAnalyzer
               projectId="test-project-1"
-              projectType={projectType}
             />
           </Card>
         );
@@ -35,9 +34,8 @@ export function Phase4TestWrapper({ component, projectType = 'FTO' }: TestWrappe
       case 'claim':
         return (
           <Card className="p-6">
-            <ClaimMappingVisualizer 
+            <ClaimMappingVisualizer
               projectId="test-project-1"
-              projectType={projectType}
             />
           </Card>
         );

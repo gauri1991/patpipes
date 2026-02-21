@@ -7,11 +7,11 @@
 
 import { useState, useEffect } from 'react';
 import { 
-  Plus, 
-  MoreHorizontal, 
-  Calendar, 
-  User, 
-  Flag, 
+  Plus,
+  MoreHorizontal,
+  Calendar,
+  User,
+  Flag,
   Clock,
   CheckCircle2,
   AlertTriangle,
@@ -23,7 +23,9 @@ import {
   Users,
   MessageSquare,
   Paperclip,
-  Eye
+  Eye,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -495,7 +497,7 @@ export function ProjectKanbanBoard({ projectId }: ProjectKanbanBoardProps) {
                                 onClick={() => handleDeleteTask(task.id)}
                                 className="text-red-600"
                               >
-                                <Trash className="h-4 w-4 mr-2" />
+                                <Trash2 className="h-4 w-4 mr-2" />
                                 Delete
                               </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -565,17 +567,17 @@ export function ProjectKanbanBoard({ projectId }: ProjectKanbanBoardProps) {
 
                             {/* Comments and Attachments */}
                             <div className="flex items-center gap-3">
-                              {task.commentsCount && task.commentsCount > 0 && (
+                              {task.comments && task.comments.length > 0 && (
                                 <div className="flex items-center gap-1">
                                   <MessageSquare className="h-3 w-3" />
-                                  <span>{task.commentsCount}</span>
+                                  <span>{task.comments.length}</span>
                                 </div>
                               )}
-                              
-                              {task.attachmentsCount && task.attachmentsCount > 0 && (
+
+                              {task.attachments && task.attachments.length > 0 && (
                                 <div className="flex items-center gap-1">
                                   <Paperclip className="h-3 w-3" />
-                                  <span>{task.attachmentsCount}</span>
+                                  <span>{task.attachments.length}</span>
                                 </div>
                               )}
                             </div>
@@ -707,11 +709,7 @@ export function ProjectKanbanBoard({ projectId }: ProjectKanbanBoardProps) {
             <form onSubmit={(e) => {
               e.preventDefault();
               const formData = new FormData(e.target as HTMLFormElement);
-              handleCreateTask(newTaskColumn, {
-                title: formData.get('title') as string,
-                description: formData.get('description') as string,
-                priority: formData.get('priority') as ProjectPriority || ProjectPriority.MEDIUM,
-              });
+              handleCreateTask(newTaskColumn);
               setIsCreateTaskOpen(false);
             }} className="space-y-4">
               <div className="space-y-2">

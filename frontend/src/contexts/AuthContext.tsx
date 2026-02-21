@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (credentials: LoginRequest) => {
     try {
       const response = await authApi.login(credentials);
-      setUser(response.user);
+      setUser(response.user as unknown as User);
       router.push('/dashboard'); // Redirect to dashboard after login
     } catch (error) {
       throw error;

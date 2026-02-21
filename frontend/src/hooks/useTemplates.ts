@@ -259,7 +259,7 @@ export function useTemplates(options: UseTemplatesOptions = {}) {
 
   // Get templates by type (filtered from loaded templates)
   const getTemplatesByType = useCallback((templateType: TemplateType): Template[] => {
-    return templates.filter(t => t.type === templateType);
+    return templates.filter(t => t.template_type === templateType);
   }, [templates]);
 
   // Get templates by scope (filtered from loaded templates)

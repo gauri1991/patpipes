@@ -63,7 +63,7 @@ import { PatentCard } from './search/PatentCard';
 import { useResearch } from '@/hooks/useResearch';
 import { patentImportApi } from '@/services/patentImportApi';
 
-import type { ResearchQuery, ResearchResult } from '@/types/patentSearch';
+import type { ResearchResult } from '@/services/researchApi';
 
 interface ImportedPatent {
   id: string;
@@ -213,33 +213,28 @@ export function QueryResultsViewer({
     await loadImportedPatents();
     
     // Also add to local results for immediate display if needed
-    const newResults = importedPatents.map((patent, index) => ({
-      // Core fields
+    const newResults: ResearchResult[] = importedPatents.map((patent, index) => ({
       id: `import_${Date.now()}_${index}`,
-      query_id: selectedQueryId || 'imported',
-      source: 'import',
+      query: selectedQueryId || 'imported',
       is_selected: false,
-      manual_relevance: '',
+      manual_relevance: '' as ResearchResult['manual_relevance'],
       relevance_score: null,
-      
-      // Patent data fields (normalized)
       patent_id: patent.patent_id || '',
       title: patent.title || 'Untitled Patent',
       abstract: patent.abstract || '',
       publication_date: patent.publication_date || null,
       application_date: patent.application_date || null,
       publication_number: patent.publication_number || patent.patent_id || '',
+      application_number: '',
       assignee: patent.assignee || '',
       inventors: Array.isArray(patent.inventors) ? patent.inventors : [],
       ipc_classes: Array.isArray(patent.ipc_classes) ? patent.ipc_classes : [],
       cpc_classes: Array.isArray(patent.cpc_classes) ? patent.cpc_classes : [],
       jurisdiction: patent.jurisdiction || '',
       priority_date: patent.priority_date || null,
-      family_id: patent.family_id || '',
-      citations: Array.isArray(patent.citations) ? patent.citations : [],
-      keywords: patent.keywords || ''
+      processed_at: new Date().toISOString()
     }));
-    
+
     setAllResults(prev => [...prev, ...newResults]);
   };
 
@@ -446,26 +441,24 @@ export function QueryResultsViewer({
                                   onClick={() => {
                                     const convertedPatent: ResearchResult = {
                                       id: patent.id,
-                                      query_id: 'imported',
-                                      source: 'import',
+                                      query: 'imported',
                                       patent_id: patent.patent_id,
                                       title: patent.title,
                                       abstract: patent.abstract,
                                       publication_date: patent.publication_date,
                                       application_date: patent.application_date,
                                       publication_number: patent.patent_id,
+                                      application_number: '',
                                       assignee: patent.assignee,
                                       inventors: patent.inventors,
                                       ipc_classes: patent.ipc_classes,
                                       cpc_classes: patent.cpc_classes,
                                       jurisdiction: patent.jurisdiction,
                                       is_selected: patent.is_selected,
-                                      manual_relevance: patent.manual_relevance,
+                                      manual_relevance: patent.manual_relevance as ResearchResult['manual_relevance'],
                                       relevance_score: patent.relevance_score,
                                       priority_date: null,
-                                      family_id: '',
-                                      citations: [],
-                                      keywords: ''
+                                      processed_at: ''
                                     };
                                     setViewingPatent(convertedPatent);
                                   }}
@@ -482,32 +475,30 @@ export function QueryResultsViewer({
                         <div className="mt-4 flex justify-center">
                           <Button
                             onClick={() => {
-                              const selectedPatents = importedPatents
+                              const selectedPatents: ResearchResult[] = importedPatents
                                 .filter(p => p.is_selected)
                                 .map(patent => ({
                                   id: patent.id,
-                                  query_id: 'imported',
-                                  source: 'import',
+                                  query: 'imported',
                                   patent_id: patent.patent_id,
                                   title: patent.title,
                                   abstract: patent.abstract,
                                   publication_date: patent.publication_date,
                                   application_date: patent.application_date,
                                   publication_number: patent.patent_id,
+                                  application_number: '',
                                   assignee: patent.assignee,
                                   inventors: patent.inventors,
                                   ipc_classes: patent.ipc_classes,
                                   cpc_classes: patent.cpc_classes,
                                   jurisdiction: patent.jurisdiction,
                                   is_selected: patent.is_selected,
-                                  manual_relevance: patent.manual_relevance,
+                                  manual_relevance: patent.manual_relevance as ResearchResult['manual_relevance'],
                                   relevance_score: patent.relevance_score,
                                   priority_date: null,
-                                  family_id: '',
-                                  citations: [],
-                                  keywords: ''
+                                  processed_at: ''
                                 }));
-                              
+
                               if (selectedPatents.length > 0 && onSendToClassifier) {
                                 onSendToClassifier(selectedPatents);
                               }
@@ -595,7 +586,7 @@ export function QueryResultsViewer({
                   <div>
                     <h4 className="font-medium mb-2">Inventors</h4>
                     <div className="flex flex-wrap gap-2">
-                      {viewingPatent.inventors.map((inventor, idx) => (
+                      {viewingPatent.inventors.map((inventor: string, idx: number) => (
                         <Badge key={idx} variant="outline">{inventor}</Badge>
                       ))}
                     </div>
@@ -610,7 +601,7 @@ export function QueryResultsViewer({
                         <div>
                           <span className="text-sm font-medium">IPC: </span>
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {viewingPatent.ipc_classes.map((cls, idx) => (
+                            {viewingPatent.ipc_classes.map((cls: string, idx: number) => (
                               <Badge key={idx} variant="secondary" className="text-xs">{cls}</Badge>
                             ))}
                           </div>
@@ -620,7 +611,7 @@ export function QueryResultsViewer({
                         <div>
                           <span className="text-sm font-medium">CPC: </span>
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {viewingPatent.cpc_classes.map((cls, idx) => (
+                            {viewingPatent.cpc_classes.map((cls: string, idx: number) => (
                               <Badge key={idx} variant="secondary" className="text-xs">{cls}</Badge>
                             ))}
                           </div>

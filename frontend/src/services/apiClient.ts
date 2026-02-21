@@ -30,7 +30,7 @@ export class ApiClient {
 
       const headers: Record<string, string> = {
         ...(token && { Authorization: `Bearer ${token}` }),
-        ...(options.headers || {}),
+        ...((options.headers as Record<string, string>) || {}),
       };
 
       // Only set Content-Type if not FormData (browser will set it automatically for FormData)
