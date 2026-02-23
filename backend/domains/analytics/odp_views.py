@@ -20,7 +20,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
-from .models import ODPCacheEntry
+from .models import ODPCacheEntry, PatentAnalysisResult
+from .patent_analysis_service import PatentAnalysisService
 from .uspto_odp_service import (
     USPTOODPClient,
     USPTOODPDetailService,
@@ -324,6 +325,213 @@ class USPTOODPViewSet(GenericViewSet):
             return Response(result)
         except USPTOODPError as exc:
             return _error_response(exc)
+
+    # ---------------------------------------------------------------
+    # Analysis endpoint
+    # ---------------------------------------------------------------
+
+    ANALYSIS_CACHE_TTL = timedelta(days=30)
+
+    @action(detail=False, methods=['post'], url_path='application/(?P<app_id>[^/.]+)/analyze')
+    def analyze(self, request, app_id=None):
+        """Run deep AI analysis on patent full text.
+
+        POST body: { "force_refresh": false, "model": "sonnet", "prompt_category": "general" }
+        Returns structured analysis with 8 sections.
+        """
+        force_refresh = request.data.get('force_refresh', False)
+        check_only = request.data.get('check_only', False)
+        model_key = request.data.get('model', 'sonnet')
+        prompt_category = request.data.get('prompt_category', 'general')
+
+        if model_key not in ('sonnet', 'opus'):
+            return Response(
+                {'error': f'Invalid model: {model_key}. Choose sonnet or opus.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check for existing analysis result (same model + category)
+        if not force_refresh:
+            existing = (
+                PatentAnalysisResult.objects
+                .filter(application_id=app_id)
+                .filter(model_used__contains=model_key)
+                .filter(prompt_category=prompt_category)
+                .order_by('-created_at')
+                .first()
+            )
+            if existing:
+                # Skip cached results where all sections failed
+                ss = existing.section_status or {}
+                if any(s == 'completed' for s in ss.values()):
+                    return Response(self._serialize_analysis(existing))
+
+        # check_only: if exact match not found, try any result for this app
+        if check_only:
+            any_existing = (
+                PatentAnalysisResult.objects
+                .filter(application_id=app_id)
+                .order_by('-created_at')
+                .first()
+            )
+            if any_existing:
+                ss = any_existing.section_status or {}
+                if any(s == 'completed' for s in ss.values()):
+                    return Response(self._serialize_analysis(any_existing))
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        # Fetch full text (reuse cached if available)
+        try:
+            full_text_data = self._get_full_text_for_analysis(app_id)
+        except Exception as exc:
+            logger.exception('Failed to fetch full text for analysis')
+            return Response(
+                {'error': f'Could not fetch patent text: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if not full_text_data:
+            return Response(
+                {'error': 'No full text available for this application.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Run analysis
+        try:
+            service = PatentAnalysisService()
+            patent_number = ''
+            try:
+                app_data = self.detail_svc.get_application(app_id)
+                patent_number = (app_data or {}).get('applicationMetaData', {}).get('patentNumber', '')
+            except Exception:
+                pass
+
+            result = service.analyze_patent(
+                application_id=app_id,
+                patent_text=full_text_data,
+                model_key=model_key,
+                patent_number=patent_number,
+                prompt_category=prompt_category,
+            )
+        except RuntimeError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception as exc:
+            logger.exception('Patent analysis failed')
+            return Response(
+                {'error': f'Analysis failed: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Only store if at least one section succeeded
+        section_statuses = result.get('section_status', {})
+        completed_count = sum(1 for s in section_statuses.values() if s == 'completed')
+        if completed_count == 0:
+            return Response(
+                {'error': 'Analysis failed: all sections encountered errors (API overloaded). Please try again.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Store result
+        try:
+            from decimal import Decimal
+            analysis = PatentAnalysisResult.objects.create(
+                application_id=app_id,
+                patent_number=result.get('patent_number', ''),
+                model_used=result['model_used'],
+                analysis_version=result.get('analysis_version', '1.0'),
+                total_input_tokens=result.get('total_input_tokens', 0),
+                total_output_tokens=result.get('total_output_tokens', 0),
+                total_cost_usd=Decimal(str(result.get('total_cost_usd', 0))),
+                processing_time_seconds=result.get('processing_time_seconds', 0),
+                keywords=result.get('keywords', {}),
+                novel_elements=result.get('novel_elements', {}),
+                claim_scope=result.get('claim_scope', {}),
+                embodiments=result.get('embodiments', {}),
+                background_analysis=result.get('background_analysis', {}),
+                claim_tree=result.get('claim_tree', {}),
+                means_plus_function=result.get('means_plus_function', {}),
+                vulnerabilities=result.get('vulnerabilities', {}),
+                section_status=result.get('section_status', {}),
+                prompt_category=result.get('prompt_category', 'general'),
+                prompts_used=result.get('prompts_used', {}),
+                created_by=request.user if request.user.is_authenticated else None,
+            )
+        except Exception:
+            logger.exception('Failed to store analysis result')
+            # Still return the result even if storage fails
+
+        return Response(result)
+
+    def _get_full_text_for_analysis(self, app_id):
+        """Get parsed full text, preferring cache."""
+        cutoff = timezone.now() - self.FULL_TEXT_CACHE_TTL
+        cached = (
+            ODPCacheEntry.objects
+            .filter(application_id=app_id, endpoint='full-text-parsed', fetched_at__gte=cutoff)
+            .first()
+        )
+        if cached and cached.response_data:
+            data = cached.response_data
+            # Prefer grant text, fall back to pgpub
+            text = data.get('grant_text') or data.get('pgpub_text')
+            if text:
+                return text
+
+        # Fetch fresh
+        app_data = self.detail_svc.get_application(app_id)
+        if not app_data:
+            return None
+
+        api_key = self.detail_svc.client.api_key
+
+        grant_meta = app_data.get('grantDocumentMetaData') or {}
+        grant_url = grant_meta.get('fileLocationURI')
+        if grant_url:
+            text = _fetch_and_parse_xml(grant_url, api_key)
+            if text:
+                return text
+
+        pub_meta = (
+            app_data.get('pgpubDocumentMetaData')
+            or app_data.get('publicationDocumentMetaData')
+            or {}
+        )
+        pgpub_url = pub_meta.get('fileLocationURI')
+        if pgpub_url:
+            text = _fetch_and_parse_xml(pgpub_url, api_key)
+            if text:
+                return text
+
+        return None
+
+    def _serialize_analysis(self, analysis: PatentAnalysisResult) -> dict:
+        """Serialize a stored PatentAnalysisResult to API response dict."""
+        return {
+            'application_id': analysis.application_id,
+            'patent_number': analysis.patent_number,
+            'model_used': analysis.model_used,
+            'analysis_version': analysis.analysis_version,
+            'total_input_tokens': analysis.total_input_tokens,
+            'total_output_tokens': analysis.total_output_tokens,
+            'total_cost_usd': float(analysis.total_cost_usd),
+            'processing_time_seconds': analysis.processing_time_seconds,
+            'section_status': analysis.section_status,
+            'keywords': analysis.keywords,
+            'novel_elements': analysis.novel_elements,
+            'claim_scope': analysis.claim_scope,
+            'embodiments': analysis.embodiments,
+            'background_analysis': analysis.background_analysis,
+            'claim_tree': analysis.claim_tree,
+            'means_plus_function': analysis.means_plus_function,
+            'vulnerabilities': analysis.vulnerabilities,
+            'prompt_category': analysis.prompt_category,
+            'prompts_used': analysis.prompts_used,
+            'created_at': analysis.created_at.isoformat(),
+            'cached': True,
+        }
 
     # ---------------------------------------------------------------
     # Trial endpoints

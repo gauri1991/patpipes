@@ -108,6 +108,195 @@ export interface ODPSearchResult<T = any> {
 }
 
 // ---------------------------------------------------------------------------
+// Analysis Types
+// ---------------------------------------------------------------------------
+
+export type AnalysisModelKey = 'sonnet' | 'opus';
+
+export interface AnalysisKeyword {
+  term: string;
+  category: string;
+  importance: number;
+  claim_locations: number[];
+  context_quote: string;
+}
+
+export interface AnalysisKeywords {
+  technical_terms: AnalysisKeyword[];
+  key_distinguishing_terms: string[];
+  technology_domain: string;
+  ipc_suggestion: string;
+}
+
+export interface NovelElement {
+  claim_number: number;
+  element_text: string;
+  novelty_reasoning: string;
+  spec_support: string;
+  spec_location_hint: string;
+}
+
+export interface AnalysisNovelElements {
+  novel_elements: NovelElement[];
+  overall_novelty_assessment: string;
+}
+
+export interface ClaimLimitation {
+  text: string;
+  type: string;
+  narrowing_effect: string;
+}
+
+export interface ClaimScopeItem {
+  claim_number: number;
+  broadness_score: number;
+  broadness_reasoning: string;
+  key_limitations: ClaimLimitation[];
+  functional_language: { text: string; type: string }[];
+  structural_language: string[];
+  overall_assessment: string;
+  error?: string;
+}
+
+export interface AnalysisClaimScope {
+  claims: ClaimScopeItem[];
+  total_independent_claims: number;
+}
+
+export interface EmbodimentItem {
+  number: number;
+  title: string;
+  summary: string;
+  figure_references: string[];
+  distinguishing_aspects: string;
+}
+
+export interface AnalysisEmbodiments {
+  embodiments: EmbodimentItem[];
+  total_count: number;
+  primary_embodiment: number;
+  variation_summary: string;
+}
+
+export interface BackgroundDeficiency {
+  deficiency: string;
+  source_quote: string;
+}
+
+export interface AnalysisBackground {
+  prior_art_deficiencies: BackgroundDeficiency[];
+  problems_identified: { problem: string; source_quote: string }[];
+  proposed_solutions: { solution: string; source_quote: string }[];
+  technical_field: string;
+  summary: string;
+}
+
+export interface ClaimTreeNode {
+  claim_number: number;
+  depends_on?: number;
+  text_preview: string;
+}
+
+export interface AnalysisClaimTree {
+  independent: ClaimTreeNode[];
+  dependent: ClaimTreeNode[];
+  tree: Record<string, number[]>;
+  total_claims: number;
+  independent_count: number;
+  dependent_count: number;
+}
+
+export interface MPFElement {
+  claim_number: number;
+  element_text: string;
+  function_described: string;
+  corresponding_structure: string;
+  spec_support_quote: string;
+  risk_level: string;
+  notes: string;
+}
+
+export interface AnalysisMPF {
+  mpf_elements: MPFElement[];
+  has_mpf_elements: boolean;
+  total_mpf_count: number;
+  recommendation: string;
+}
+
+export interface Section112Issue {
+  claim_number: number;
+  term: string;
+  issue_type: string;
+  explanation: string;
+  severity: string;
+}
+
+export interface AnalysisVulnerabilities {
+  section_101_risk: {
+    risk_level: string;
+    reasoning: string;
+    abstract_idea_candidates: string[];
+    practical_application_arguments: string[];
+  };
+  section_112_issues: Section112Issue[];
+  overall_prosecution_risk: {
+    rating: string;
+    summary: string;
+    recommendations: string[];
+  };
+}
+
+export interface PromptUsedInfo {
+  source: 'database' | 'default';
+  template_id?: string;
+  version?: number;
+  category?: string;
+  rendered_prompt: string;
+}
+
+export interface PatentAnalysis {
+  application_id: string;
+  patent_number: string;
+  model_used: string;
+  analysis_version: string;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  processing_time_seconds: number;
+  section_status: Record<string, string>;
+  keywords: AnalysisKeywords;
+  novel_elements: AnalysisNovelElements;
+  claim_scope: AnalysisClaimScope;
+  embodiments: AnalysisEmbodiments;
+  background_analysis: AnalysisBackground;
+  claim_tree: AnalysisClaimTree;
+  means_plus_function: AnalysisMPF;
+  vulnerabilities: AnalysisVulnerabilities;
+  prompt_category?: string;
+  prompts_used?: Record<string, PromptUsedInfo>;
+  created_at?: string;
+  cached?: boolean;
+}
+
+export type AnalysisCategoryKey =
+  | 'general'
+  | 'hi_tech'
+  | 'biomedical'
+  | 'life_science'
+  | 'mechanical'
+  | 'electrical'
+  | 'chemical'
+  | 'pharma'
+  | 'semiconductor';
+
+export interface AnalyzeOptions {
+  force_refresh?: boolean;
+  check_only?: boolean;
+  model?: AnalysisModelKey;
+  prompt_category?: AnalysisCategoryKey;
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
@@ -195,6 +384,17 @@ class UsptoOdpApiService {
 
   async searchAppealDecisions(query: Record<string, any>): Promise<ApiResponse<ODPSearchResult>> {
     return ApiClient.post<ODPSearchResult>(`${ODP_BASE}/appeals/decisions/search/`, query);
+  }
+
+  // -- Analysis endpoint ----------------------------------------------------
+
+  async analyzePatent(appId: string, options?: AnalyzeOptions): Promise<ApiResponse<PatentAnalysis>> {
+    return ApiClient.post<PatentAnalysis>(`${ODP_BASE}/application/${appId}/analyze/`, {
+      force_refresh: options?.force_refresh ?? false,
+      check_only: options?.check_only ?? false,
+      model: options?.model ?? 'sonnet',
+      prompt_category: options?.prompt_category ?? 'general',
+    });
   }
 }
 
