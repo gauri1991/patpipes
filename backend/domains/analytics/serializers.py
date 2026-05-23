@@ -69,9 +69,9 @@ class TechnologyAreaSerializer(serializers.ModelSerializer):
 
 
 class PatentDatasetSerializer(serializers.ModelSerializer):
-    """Patent dataset serializer"""
+    """Patent dataset serializer — full detail, includes large JSON fields."""
     created_by = UserBasicSerializer(read_only=True)
-    
+
     class Meta:
         model = PatentDataset
         fields = [
@@ -83,6 +83,21 @@ class PatentDatasetSerializer(serializers.ModelSerializer):
             'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['processing_progress', 'processing_log', 'total_patents', 'processed_patents']
+
+
+class PatentDatasetListSerializer(serializers.ModelSerializer):
+    """Lightweight dataset serializer for list views — excludes large JSON blobs."""
+    created_by = UserBasicSerializer(read_only=True)
+
+    class Meta:
+        model = PatentDataset
+        fields = [
+            'id', 'project', 'name', 'description', 'data_source', 'data_file',
+            'processing_status', 'processing_progress',
+            'total_patents', 'processed_patents', 'classification_confidence',
+            'created_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['processing_progress', 'total_patents', 'processed_patents']
 
 
 class GlobalCompetitorProfileSerializer(serializers.ModelSerializer):
@@ -208,12 +223,23 @@ class AnalyticsProjectSerializer(serializers.ModelSerializer):
     insights = AnalyticsInsightSerializer(many=True, read_only=True)
     progress_percentage = serializers.ReadOnlyField()
 
+    portfolio_name = serializers.SerializerMethodField()
+    portfolio_patent_count = serializers.SerializerMethodField()
+
+    def get_portfolio_name(self, obj):
+        return obj.portfolio.name if obj.portfolio else None
+
+    def get_portfolio_patent_count(self, obj):
+        # Use cached field — avoids N+1 query (kept fresh by PortfolioViewSet.update_metrics)
+        return obj.portfolio.total_patents if obj.portfolio else None
+
     class Meta:
         model = AnalyticsProject
         fields = [
             'id', 'name', 'description', 'status', 'priority', 'created_by',
             'assigned_to', 'start_date', 'due_date', 'completed_date',
-            'analysis_scope', 'content_type', 'object_id', 'progress_percentage',
+            'analysis_scope', 'portfolio', 'portfolio_name', 'portfolio_patent_count',
+            'content_type', 'object_id', 'progress_percentage',
             'technology_areas', 'datasets', 'competitors', 'visualizations',
             'reports', 'presentations', 'insights', 'created_at', 'updated_at'
         ]
@@ -221,31 +247,17 @@ class AnalyticsProjectSerializer(serializers.ModelSerializer):
 
 class AnalyticsProjectCreateSerializer(serializers.ModelSerializer):
     """Analytics project creation serializer"""
-    
+
     class Meta:
         model = AnalyticsProject
         fields = [
             'name', 'description', 'status', 'priority', 'assigned_to',
-            'start_date', 'due_date', 'analysis_scope', 'content_type', 'object_id'
+            'start_date', 'due_date', 'analysis_scope', 'portfolio',
+            'content_type', 'object_id'
         ]
     
     def create(self, validated_data):
-        user = self.context['request'].user
-        
-        # For development/testing - use a default user if not authenticated
-        if not user or not user.is_authenticated:
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            # Use the test user we know exists
-            user = User.objects.filter(email='test@example.com').first()
-            if not user:
-                # Fallback to any admin user
-                user = User.objects.filter(role='admin').first()
-            if not user:
-                # Last resort - use first available user
-                user = User.objects.first()
-        
-        validated_data['created_by'] = user
+        validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
 
 
@@ -258,6 +270,8 @@ class AnalyticsDashboardSerializer(serializers.Serializer):
     completed_projects = serializers.IntegerField()
     total_datasets = serializers.IntegerField()
     total_patents_analyzed = serializers.IntegerField()
+    total_patents_in_portfolios = serializers.IntegerField(default=0)
+    patents_with_ai_analysis = serializers.IntegerField()
     total_visualizations = serializers.IntegerField()
     
     # Recent activity  
@@ -272,6 +286,12 @@ class AnalyticsDashboardSerializer(serializers.Serializer):
     # Trends
     monthly_project_trends = serializers.ListField()
     completion_rate_trend = serializers.ListField()
+
+    # Patent-level KPIs
+    top_technology_areas = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+    top_assignees = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+    patent_status_distribution = serializers.DictField(required=False, default=dict)
+    filing_trend = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     
     def get_recent_projects(self, obj):
         """Serialize recent projects with simple data"""
@@ -279,8 +299,20 @@ class AnalyticsDashboardSerializer(serializers.Serializer):
         return SimpleAnalyticsProjectSerializer(obj['recent_projects'], many=True).data
     
     def get_recent_insights(self, obj):
-        """Serialize recent insights safely"""
-        return []  # Return empty list for now to avoid database issues
+        """Serialize recent insights"""
+        insights = obj.get('recent_insights', [])
+        return [
+            {
+                'id': str(i.id),
+                'title': i.title,
+                'insight_type': i.insight_type,
+                'description': i.description,
+                'confidence_level': i.confidence_level,
+                'impact_score': i.impact_score,
+                'created_at': i.created_at.isoformat(),
+            }
+            for i in insights
+        ]
 
 
 class ColumnMappingRuleSerializer(serializers.ModelSerializer):
@@ -444,3 +476,92 @@ class TemplateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('report_type is required for report templates')
         
         return attrs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bundle Analysis Serializers
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PatentBundleAttributesSerializer(serializers.ModelSerializer):
+    patent_id = serializers.SerializerMethodField()
+    title = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import PatentBundleAttributes
+        model = PatentBundleAttributes
+        fields = [
+            'id', 'patent_record_id', 'patent_id', 'title',
+            # Group A
+            'a1_primary_domain', 'a2_tech_subcategory', 'a3_stack_layer', 'a4_subsystem', 'a5_use_case',
+            # Group B
+            'b1_sep_potential', 'b2_standard_tagged', 'b3_interface_role',
+            # Group C
+            'c1_claim_type', 'c2_breadth', 'c3_claim_count', 'c4_design_around_difficulty',
+            # Group D
+            'd1_external_detectability', 'd2_teardown_detectability', 'd3_reads_on_products',
+            # Group E
+            'e1_family_size', 'e2_prosecution_status', 'e3_continuation', 'e4_remaining_term_years', 'e5_maintenance_status',
+            # Group F
+            'f1_jurisdictions', 'f2_trilateral', 'f3_major_market_score',
+            # Group G
+            'g1_convergence_theme', 'g2_generation_tag', 'g3_cross_industry_applicability',
+            # Group H
+            'h1_claim_strength', 'h2_prior_art_exposure', 'h3_prosecution_risk', 'h4_divided_infringement_risk',
+            'h5_forward_citations', 'h6_backward_citations', 'h7_litigation_history',
+            'h8_chain_of_title', 'h9_eou_availability', 'h10_encumbrance_status',
+            # Group I
+            'i1_product_mapping_confidence', 'i2_implementation_maturity', 'i3_adjacent_market_reread', 'i4_workaround_complexity',
+            # Provenance
+            'derived_fields', 'ai_extracted_fields', 'manually_set_fields', 'last_ai_extraction',
+            'created_at', 'updated_at',
+        ]
+
+    def get_patent_id(self, obj):
+        try:
+            return obj.patent_record.patent_id or str(obj.patent_record_id)
+        except Exception:
+            return str(obj.patent_record_id)
+
+    def get_title(self, obj):
+        try:
+            return obj.patent_record.title or ''
+        except Exception:
+            return ''
+
+
+class BundlingConfigurationSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import BundlingConfiguration
+        model = BundlingConfiguration
+        fields = ['id', 'project', 'name', 'preset', 'enabled_bundles', 'thresholds', 'gate_toggles', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class SalesPackageSerializer(serializers.ModelSerializer):
+    from .models import SalesPackage
+    bundle_count = serializers.IntegerField(read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import SalesPackage
+        model = SalesPackage
+        fields = [
+            'id', 'project', 'name', 'description', 'bundle_codes',
+            'transaction_type', 'status',
+            'buyer_targets', 'notes',
+            'primary_archetype', 'secondary_archetype', 'listing_pattern',
+            'mcl_entries',
+            'generated_teaser', 'generated_listing',
+            'listing_tier_report', 'listing_generated_at',
+            'bundle_count', 'created_by', 'created_by_name',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'bundle_count', 'created_by', 'created_at', 'updated_at',
+            'generated_teaser', 'generated_listing', 'listing_tier_report', 'listing_generated_at',
+        ]
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.email
+        return None

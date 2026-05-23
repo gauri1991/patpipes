@@ -76,18 +76,39 @@ class AnalyticsProject(models.Model):
     # Analysis scope
     analysis_scope = models.JSONField(default=dict, help_text="Technology areas, keywords, date ranges, etc.")
     
-    # Generic relation to link with our existing projects/patents
+    # Explicit link to portfolio (direct FK for clean cross-domain queries)
+    portfolio = models.ForeignKey(
+        'patents.Portfolio',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='analytics_projects',
+        help_text="Portfolio being analysed — links this project to real patent data"
+    )
+
+    # Generic relation to link with any other object (legacy / flexible)
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True)
     object_id = models.UUIDField(null=True, blank=True)
     related_object = GenericForeignKey('content_type', 'object_id')
-    
+
+    # Persisted analysis results and active task tracking
+    analysis_results = models.JSONField(default=dict, blank=True,
+        help_text="Keyed by analysis_type; stores last completed result + active task_id per type.")
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'analytics_projects'
         ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['created_by']),
+            models.Index(fields=['priority']),
+            models.Index(fields=['status', 'created_by']),
+            models.Index(fields=['-created_at']),
+        ]
     
     def __str__(self):
         return self.name
@@ -109,21 +130,29 @@ class AnalyticsProject(models.Model):
         return status_weights.get(self.status, 0)
     
     def _calculate_current_progress(self):
-        """Calculate progress based on completed sub-tasks"""
-        total_tasks = (
-            self.datasets.count() + 
-            self.visualizations.count() + 
-            self.reports.count()
-        )
-        completed_tasks = (
-            self.datasets.filter(processing_status='completed').count() +
-            self.visualizations.filter(status='completed').count() +
-            self.reports.filter(status='completed').count()
-        )
-        
-        if total_tasks == 0:
+        """Calculate progress based on completed sub-tasks.
+
+        Uses pre-annotated counts if available (from ViewSet queryset),
+        otherwise falls back to individual queries.
+        """
+        if hasattr(self, '_dataset_count'):
+            total = self._dataset_count + self._viz_count + self._report_count
+            done = self._dataset_done + self._viz_done + self._report_done
+        else:
+            total = (
+                self.datasets.count() +
+                self.visualizations.count() +
+                self.reports.count()
+            )
+            done = (
+                self.datasets.filter(processing_status='completed').count() +
+                self.visualizations.filter(status='completed').count() +
+                self.reports.filter(status='completed').count()
+            )
+
+        if total == 0:
             return 0
-        return int((completed_tasks / total_tasks) * 100)
+        return int((done / total) * 100)
 
 
 class GlobalTechnologyArea(models.Model):
@@ -302,6 +331,10 @@ class PatentDataset(models.Model):
     class Meta:
         db_table = 'analytics_patent_datasets'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['processing_status']),
+            models.Index(fields=['project', 'processing_status']),
+        ]
     
     def __str__(self):
         return f"{self.project.name} - {self.name}"
@@ -793,9 +826,10 @@ class ColumnMappingRule(models.Model):
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # Target field in PatentRecord model
+    # Target field in PatentRecord model — unique per field name
     target_field = models.CharField(
-        max_length=100, 
+        max_length=100,
+        unique=True,
         help_text="Field name in PatentRecord model"
     )
     
@@ -1122,7 +1156,21 @@ class ResearchQuery(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
+    # Watch & automation fields
+    is_watch = models.BooleanField(default=False, help_text='Whether this query is saved as a watch for periodic re-run')
+    watch_cadence = models.CharField(
+        max_length=20, blank=True, default='',
+        choices=[('', 'Not watched'), ('daily', 'Daily'), ('weekly', 'Weekly'), ('monthly', 'Monthly')],
+        help_text='How often to re-run this watch query'
+    )
+    alert_thresholds = models.JSONField(
+        default=dict, blank=True,
+        help_text='Alert conditions: {"new_patents_min": 5, "new_assignee": true, "white_space_change": true}'
+    )
+    last_watch_run = models.DateTimeField(null=True, blank=True, help_text='When the watch was last run')
+    watch_diff = models.JSONField(default=dict, blank=True, help_text='Diff from last watch run')
+
     class Meta:
         db_table = 'analytics_research_queries'
         ordering = ['-created_at']
@@ -1130,6 +1178,7 @@ class ResearchQuery(models.Model):
             models.Index(fields=['project', 'status']),
             models.Index(fields=['api_source']),
             models.Index(fields=['created_at']),
+            models.Index(fields=['is_watch', 'watch_cadence']),
         ]
     
     def __str__(self):
@@ -2382,3 +2431,637 @@ class TemplateUsageLog(models.Model):
     
     def __str__(self):
         return f"{self.template.name} used by {self.user} at {self.used_at}"
+
+
+class PatentAnalysisResult(models.Model):
+    """Stores structured AI analysis results for a patent application."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    application_id = models.CharField(max_length=64, db_index=True)
+    patent_number = models.CharField(max_length=32, blank=True, default='')
+
+    # Analysis metadata
+    model_used = models.CharField(max_length=50, blank=True, default='')  # e.g., "claude-sonnet-4-6"
+    analysis_version = models.CharField(max_length=10, default="1.0")
+    total_input_tokens = models.IntegerField(default=0)
+    total_output_tokens = models.IntegerField(default=0)
+    total_cost_usd = models.DecimalField(max_digits=8, decimal_places=4, default=0)
+    processing_time_seconds = models.FloatField(default=0)
+
+    # Section results (each is a JSONField for flexibility)
+    keywords = models.JSONField(default=dict)
+    novel_elements = models.JSONField(default=dict)
+    claim_scope = models.JSONField(default=dict)
+    embodiments = models.JSONField(default=dict)
+    background_analysis = models.JSONField(default=dict)
+    claim_tree = models.JSONField(default=dict)
+    means_plus_function = models.JSONField(default=dict)
+    vulnerabilities = models.JSONField(default=dict)
+
+    # Section-level status tracking
+    section_status = models.JSONField(default=dict)
+
+    # Prompt tracking — stores the exact prompts used and which category
+    prompt_category = models.CharField(max_length=30, blank=True, default='general')
+    prompts_used = models.JSONField(default=dict)  # {section_name: {prompt_text, template_id, version}}
+
+    # Generic analysis storage — used by algorithm result persistence & family analysis
+    analysis_type = models.CharField(max_length=60, blank=True, default='', db_index=True,
+                                     help_text="e.g. landscape_analysis, family_analysis, investment_analysis")
+    extracted_entities = models.JSONField(default=dict, blank=True,
+                                         help_text="Full algorithm/analysis result payload")
+    metadata = models.JSONField(default=dict, blank=True,
+                                help_text="Contextual info: project name, who triggered, params")
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Link to user who triggered it
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='patent_analyses')
+
+    class Meta:
+        db_table = 'analytics_patent_analysis'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['application_id', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Analysis({self.application_id}, {self.model_used}, {self.created_at})"
+
+
+class LLMProviderConfig(models.Model):
+    """Stores API keys and configuration for LLM providers (Anthropic, OpenAI, etc.)."""
+
+    PROVIDER_CHOICES = [
+        ('anthropic', 'Anthropic (Claude)'),
+        ('openai', 'OpenAI (GPT)'),
+        ('google', 'Google (Gemini)'),
+        ('cohere', 'Cohere'),
+        ('mistral', 'Mistral AI'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, unique=True)
+    display_name = models.CharField(max_length=100)
+    api_key = models.CharField(max_length=500)
+    api_base_url = models.CharField(max_length=500, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    test_status = models.CharField(
+        max_length=10,
+        choices=[('never', 'Never Tested'), ('passed', 'Passed'), ('failed', 'Failed')],
+        default='never',
+    )
+    test_error = models.TextField(blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        db_table = 'analytics_llm_provider_config'
+        ordering = ['provider']
+
+    def __str__(self):
+        return f"{self.display_name} ({'active' if self.is_active else 'inactive'})"
+
+    @property
+    def masked_key(self):
+        """Return masked API key for display: first 4 + ... + last 4."""
+        if not self.api_key or len(self.api_key) < 10:
+            return '***'
+        return f"{self.api_key[:4]}{'*' * 8}{self.api_key[-4:]}"
+
+    @classmethod
+    def get_key(cls, provider: str) -> str | None:
+        """Get the active API key for a provider. Returns None if not found/inactive."""
+        try:
+            config = cls.objects.get(provider=provider, is_active=True)
+            return config.api_key
+        except cls.DoesNotExist:
+            return None
+
+
+class AnalysisPromptTemplate(models.Model):
+    """Versioned, categorized prompt templates for patent analysis sections."""
+
+    SECTION_CHOICES = [
+        ('keywords', 'Keyword Extraction'),
+        ('novel_elements', 'Novel Element Identification'),
+        ('claim_scope', 'Claim Scope & Broadness'),
+        ('embodiments', 'Embodiment Analysis'),
+        ('background_analysis', 'Background & Problem Analysis'),
+        ('means_plus_function', 'Means-Plus-Function Detection'),
+        ('vulnerabilities', 'Prosecution Vulnerability Assessment'),
+    ]
+
+    CATEGORY_CHOICES = [
+        ('general', 'General'),
+        ('hi_tech', 'Hi-Tech / Software'),
+        ('biomedical', 'Biomedical'),
+        ('life_science', 'Life Science'),
+        ('mechanical', 'Mechanical'),
+        ('electrical', 'Electrical'),
+        ('chemical', 'Chemical'),
+        ('pharma', 'Pharmaceutical'),
+        ('semiconductor', 'Semiconductor'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    section = models.CharField(max_length=30, choices=SECTION_CHOICES)
+    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default='general')
+    version = models.PositiveIntegerField(default=1)
+    prompt_text = models.TextField()
+    description = models.CharField(max_length=255, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='prompt_templates',
+    )
+
+    class Meta:
+        db_table = 'analytics_prompt_template'
+        ordering = ['section', 'category', '-version']
+        unique_together = ('section', 'category', 'version')
+
+    def __str__(self):
+        return f"{self.get_section_display()} / {self.get_category_display()} v{self.version}"
+
+    @classmethod
+    def get_active(cls, section: str, category: str = 'general') -> 'AnalysisPromptTemplate | None':
+        """Get the latest active prompt for a section+category. Falls back to 'general'."""
+        prompt = (
+            cls.objects
+            .filter(section=section, category=category, is_active=True)
+            .order_by('-version')
+            .first()
+        )
+        if prompt:
+            return prompt
+        if category != 'general':
+            return (
+                cls.objects
+                .filter(section=section, category='general', is_active=True)
+                .order_by('-version')
+                .first()
+            )
+        return None
+
+    @classmethod
+    def get_version_history(cls, section: str, category: str = 'general'):
+        """Return all versions for a section+category, newest first."""
+        return cls.objects.filter(section=section, category=category).order_by('-version')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Patent Portfolio Bundle Analysis Models
+# ─────────────────────────────────────────────────────────────────────────────
+
+User = get_user_model()
+
+
+class BundleType(models.Model):
+    """Seed table: 33 predefined bundle type definitions."""
+    id = models.IntegerField(primary_key=True)
+    code = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    routing_rule_summary = models.TextField(blank=True)
+    display_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'analytics_bundle_type'
+        ordering = ['display_order', 'id']
+
+    def __str__(self):
+        return f"{self.id}. {self.name}"
+
+
+class PatentBundleAttributes(models.Model):
+    """42 technical attribute scores for a PatentRecord, used for bundle routing."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    patent_record = models.OneToOneField(
+        'PatentRecord', on_delete=models.CASCADE, related_name='bundle_attributes'
+    )
+
+    # ── Group A: Technology Classification ──────────────────────────────────
+    a1_primary_domain = models.CharField(max_length=200, blank=True)
+    a2_tech_subcategory = models.CharField(max_length=200, blank=True)
+    a3_stack_layer = models.CharField(
+        max_length=50, blank=True,
+        choices=[('App','App'),('Middleware','Middleware'),('Cloud','Cloud'),
+                 ('Hardware','Hardware'),('OS','OS'),('Protocol','Protocol')]
+    )
+    a4_subsystem = models.CharField(max_length=200, blank=True)
+    a5_use_case = models.CharField(max_length=200, blank=True)
+
+    # ── Group B: Standards & Ecosystem ──────────────────────────────────────
+    b1_sep_potential = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    b2_standard_tagged = models.CharField(max_length=200, blank=True)
+    b3_interface_role = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+
+    # ── Group C: Claim & Scope ───────────────────────────────────────────────
+    c1_claim_type = models.CharField(
+        max_length=50, blank=True,
+        choices=[('Method','Method'),('Apparatus','Apparatus'),('CRM','CRM'),
+                 ('System','System'),('Composition','Composition')]
+    )
+    c2_breadth = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    c3_claim_count = models.IntegerField(null=True, blank=True)
+    c4_design_around_difficulty = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+
+    # ── Group D: Detectability & Enforcement ────────────────────────────────
+    d1_external_detectability = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    d2_teardown_detectability = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    d3_reads_on_products = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+
+    # ── Group E: Family & Lifecycle ──────────────────────────────────────────
+    e1_family_size = models.IntegerField(default=1)
+    e2_prosecution_status = models.CharField(
+        max_length=50, blank=True,
+        choices=[('Pending','Pending'),('Granted','Granted'),
+                 ('Abandoned','Abandoned'),('Expired','Expired')]
+    )
+    e3_continuation = models.BooleanField(null=True, blank=True)
+    e4_remaining_term_years = models.FloatField(null=True, blank=True)
+    e5_maintenance_status = models.CharField(
+        max_length=50, blank=True,
+        choices=[('Current','Current'),('Lapsed','Lapsed'),('Unknown','Unknown')]
+    )
+
+    # ── Group F: Geographic ──────────────────────────────────────────────────
+    f1_jurisdictions = models.JSONField(default=list)
+    f2_trilateral = models.BooleanField(null=True, blank=True)
+    f3_major_market_score = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+
+    # ── Group G: Strategic & Thematic ───────────────────────────────────────
+    g1_convergence_theme = models.CharField(max_length=200, blank=True)
+    g2_generation_tag = models.CharField(max_length=100, blank=True)
+    g3_cross_industry_applicability = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+
+    # ── Group H: Patent Quality & Vulnerability ──────────────────────────────
+    h1_claim_strength = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    h2_prior_art_exposure = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    h3_prosecution_risk = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    h4_divided_infringement_risk = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    h5_forward_citations = models.IntegerField(null=True, blank=True)
+    h6_backward_citations = models.IntegerField(null=True, blank=True)
+    h7_litigation_history = models.CharField(
+        max_length=50, blank=True,
+        choices=[('None','None'),('Filed','Filed'),('Survived','Survived'),('Lost','Lost')]
+    )
+    h8_chain_of_title = models.CharField(
+        max_length=50, blank=True,
+        choices=[('Clean','Clean'),('Issues','Issues'),('Unknown','Unknown')]
+    )
+    h9_eou_availability = models.CharField(
+        max_length=50, blank=True,
+        choices=[('None','None'),('Partial','Partial'),('Full','Full')]
+    )
+    h10_encumbrance_status = models.CharField(
+        max_length=50, blank=True,
+        choices=[('None','None'),('FRAND','FRAND'),
+                 ('Exclusive License','Exclusive License'),('Other','Other')]
+    )
+
+    # ── Group I: Market/Buyer Signals ────────────────────────────────────────
+    i1_product_mapping_confidence = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    i2_implementation_maturity = models.CharField(
+        max_length=50, blank=True,
+        choices=[('Concept','Concept'),('Prototype','Prototype'),('Productized','Productized'),
+                 ('Commercial','Commercial'),('Ubiquitous','Ubiquitous')]
+    )
+    i3_adjacent_market_reread = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+    i4_workaround_complexity = models.IntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(3)]
+    )
+
+    # ── Provenance tracking ──────────────────────────────────────────────────
+    derived_fields = models.JSONField(default=list)
+    ai_extracted_fields = models.JSONField(default=list)
+    manually_set_fields = models.JSONField(default=list)
+    last_ai_extraction = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'analytics_patent_bundle_attributes'
+
+    def __str__(self):
+        return f"BundleAttrs({self.patent_record_id})"
+
+    def attribute_completeness(self) -> float:
+        """Returns fraction of H+I fields that are non-zero/non-empty."""
+        hi_fields = [
+            'h1_claim_strength','h2_prior_art_exposure','h3_prosecution_risk',
+            'h7_litigation_history','h8_chain_of_title','h9_eou_availability',
+            'h10_encumbrance_status','i1_product_mapping_confidence',
+            'i2_implementation_maturity','i3_adjacent_market_reread','i4_workaround_complexity',
+        ]
+        filled = sum(1 for f in hi_fields if getattr(self, f) not in (0, '', None))
+        return round(filled / len(hi_fields), 2)
+
+
+DEFAULT_THRESHOLDS = {
+    'sep_b1_cutoff': 2,
+    'interface_b3_cutoff': 2,
+    'detect_d1_cutoff': 2,
+    'detect_d2_cutoff': 2,
+    'family_e1_min': 2,
+    'cross_industry_g3_cutoff': 2,
+    'defensive_d3_cutoff': 2,
+    'whitespace_c4_cutoff': 2,
+    'anchor_h1_cutoff': 2,
+    'high_citation_h5_min': 15,
+    'pre_expiry_min_years': 1,
+    'pre_expiry_max_years': 4,
+    'salvage_h1_max': 1,
+    'salvage_e4_max': 5,
+    'salvage_h2_max': 1,
+    'strength_depth_min': 4,
+    'strength_detect_min': 2,
+    'strength_term_min': 10,
+}
+
+DEFAULT_GATE_TOGGLES = {
+    'gate_weakest_h1': True,
+    'gate_invalidity_exposure': True,
+    'gate_eou_ready': True,
+    'gate_survived': True,
+    'gate_cont_optionality': True,
+}
+
+BUNDLE_PRESETS = {
+    'all_on': {},
+    'npe': {
+        'enabled_bundles': {
+            'TECH_DOMAIN': False, 'PRODUCT_ARCH': False, 'STACK_LAYER': False,
+            'MANUFACTURING': False, 'MATERIALS_CHEM': False, 'ALGO_SOFTWARE': False,
+            'GEN_ROADMAP': False, 'FAMILY_TREE': False, 'LIFECYCLE': False,
+            'FOUNDATIONAL': False, 'CONVERGENT_THEME': False, 'WHITESPACE': False,
+            'PROSECUTION': False, 'PICKET_FENCE': False, 'STRONG_CORE_TAIL': False,
+            'CONTINUATION_LIVE': False, 'CLEAN_TITLE': False, 'ADJACENT_REREAD': False,
+            'PRE_EXPIRY': False, 'PROVENANCE': False,
+        },
+        'thresholds': {'high_citation_h5_min': 10},
+    },
+    'operating_company': {
+        'enabled_bundles': {
+            'SEP': False, 'GEN_ROADMAP': False, 'CLAIM_TYPE': False, 'DETECTABILITY': False,
+            'LIFECYCLE': False, 'CONVERGENT_THEME': False, 'DEFENSIVE': False,
+            'PROSECUTION': False, 'PICKET_FENCE': False, 'STRONG_CORE_TAIL': False,
+            'EOU_BACKED': False, 'BATTLE_TESTED': False, 'HIGH_CITATION': False,
+            'ADJACENT_REREAD': False, 'SALVAGE': False, 'PRE_EXPIRY': False,
+        },
+        'thresholds': {'family_e1_min': 3},
+    },
+    'defensive': {
+        'enabled_bundles': {
+            'SEP': False, 'PRODUCT_ARCH': False, 'USE_CASE': False, 'MANUFACTURING': False,
+            'MATERIALS_CHEM': False, 'ALGO_SOFTWARE': False, 'INTEROPERABILITY': False,
+            'DETECTABILITY': False, 'FAMILY_TREE': False, 'FOUNDATIONAL': False,
+            'CONVERGENT_THEME': False, 'DEFENSIVE': False, 'WHITESPACE': False,
+            'ANCHOR_HALO': False, 'PICKET_FENCE': False, 'CONTINUATION_LIVE': False,
+            'EOU_BACKED': False, 'BATTLE_TESTED': False, 'HIGH_CITATION': False,
+            'ADJACENT_REREAD': False, 'PROVENANCE': False,
+        },
+        'thresholds': {'salvage_h1_max': 2, 'salvage_e4_max': 8},
+        'gate_toggles': {
+            'gate_weakest_h1': False, 'gate_eou_ready': False,
+            'gate_survived': False, 'gate_cont_optionality': False,
+        },
+    },
+    'standards': {
+        'enabled_bundles': {
+            'TECH_DOMAIN': False, 'PRODUCT_ARCH': False, 'STACK_LAYER': False,
+            'USE_CASE': False, 'MANUFACTURING': False, 'MATERIALS_CHEM': False,
+            'ALGO_SOFTWARE': False, 'CLAIM_TYPE': False, 'FAMILY_TREE': False,
+            'LIFECYCLE': False, 'FOUNDATIONAL': False, 'CROSS_INDUSTRY': False,
+            'CONVERGENT_THEME': False, 'DEFENSIVE': False, 'WHITESPACE': False,
+            'PROSECUTION': False, 'PICKET_FENCE': False, 'STRONG_CORE_TAIL': False,
+            'CONTINUATION_LIVE': False, 'ADJACENT_REREAD': False, 'SALVAGE': False,
+            'PRE_EXPIRY': False, 'PROVENANCE': False,
+        },
+        'gate_toggles': {'gate_eou_ready': True, 'gate_survived': True},
+    },
+    'ev_powertrain': {
+        'enabled_bundles': {
+            'SEP': False, 'ALGO_SOFTWARE': False, 'INTEROPERABILITY': False,
+            'CLAIM_TYPE': False, 'DETECTABILITY': False, 'LIFECYCLE': False,
+            'CONVERGENT_THEME': False, 'DEFENSIVE': False, 'PROSECUTION': False,
+            'PICKET_FENCE': False, 'CONTINUATION_LIVE': False, 'EOU_BACKED': False,
+            'BATTLE_TESTED': False, 'HIGH_CITATION': False, 'ADJACENT_REREAD': False,
+            'SALVAGE': False, 'PRE_EXPIRY': False,
+        },
+    },
+}
+
+
+class BundlingConfiguration(models.Model):
+    """Per-project bundle analysis configuration (preset + toggles + thresholds)."""
+    PRESET_CHOICES = [
+        ('all_on', 'All ON'),
+        ('npe', 'NPE / Counter-Assertion'),
+        ('operating_company', 'Operating Company / FTO'),
+        ('defensive', 'Defensive Aggregator'),
+        ('standards', 'Standards Licensee'),
+        ('ev_powertrain', 'EV Powertrain Sale'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        'AnalyticsProject', on_delete=models.CASCADE, related_name='bundling_configurations'
+    )
+    name = models.CharField(max_length=200, default='Default')
+    preset = models.CharField(max_length=50, choices=PRESET_CHOICES, default='all_on')
+    enabled_bundles = models.JSONField(default=dict)
+    thresholds = models.JSONField(default=dict)
+    gate_toggles = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'analytics_bundling_configuration'
+
+    def get_effective_thresholds(self) -> dict:
+        merged = {**DEFAULT_THRESHOLDS}
+        preset_data = BUNDLE_PRESETS.get(self.preset, {})
+        merged.update(preset_data.get('thresholds', {}))
+        merged.update(self.thresholds)
+        return merged
+
+    def get_effective_enabled_bundles(self) -> dict:
+        merged = {}
+        preset_data = BUNDLE_PRESETS.get(self.preset, {})
+        merged.update(preset_data.get('enabled_bundles', {}))
+        merged.update(self.enabled_bundles)
+        return merged
+
+
+class BundleAssignment(models.Model):
+    """Computed result: does a patent qualify for a bundle type?"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    patent_attributes = models.ForeignKey(
+        PatentBundleAttributes, on_delete=models.CASCADE, related_name='bundle_assignments'
+    )
+    bundle_type = models.ForeignKey(
+        BundleType, on_delete=models.CASCADE, related_name='assignments'
+    )
+    project = models.ForeignKey(
+        'AnalyticsProject', on_delete=models.CASCADE, related_name='bundle_assignments'
+    )
+    is_assigned = models.BooleanField(default=False)
+    run_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'analytics_bundle_assignment'
+        unique_together = [('patent_attributes', 'bundle_type', 'project')]
+        indexes = [
+            models.Index(fields=['project', 'bundle_type']),
+            models.Index(fields=['project', 'is_assigned']),
+        ]
+
+
+class BundleQualityScore(models.Model):
+    """Aggregate quality metrics per bundle per project run."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        'AnalyticsProject', on_delete=models.CASCADE, related_name='bundle_quality_scores'
+    )
+    bundle_type = models.ForeignKey(
+        BundleType, on_delete=models.CASCADE, related_name='quality_scores'
+    )
+    patent_count = models.IntegerField(default=0)
+
+    # 8 primary metrics
+    avg_claim_strength = models.FloatField(null=True, blank=True)
+    avg_breadth = models.FloatField(null=True, blank=True)
+    pct_trilateral = models.FloatField(null=True, blank=True)
+    avg_remaining_term = models.FloatField(null=True, blank=True)
+    avg_detectability = models.FloatField(null=True, blank=True)
+    avg_forward_citations = models.FloatField(null=True, blank=True)
+    pct_sep = models.FloatField(null=True, blank=True)
+    pct_continuation_live = models.FloatField(null=True, blank=True)
+
+    # 5 quality gate columns
+    gate_weakest_h1 = models.IntegerField(null=True, blank=True)
+    gate_invalidity_exposure_pct = models.FloatField(null=True, blank=True)
+    gate_eou_ready_pct = models.FloatField(null=True, blank=True)
+    gate_survived_pct = models.FloatField(null=True, blank=True)
+    gate_cont_optionality_pct = models.FloatField(null=True, blank=True)
+
+    pioneer_count = models.IntegerField(null=True, blank=True)
+    strength_flag = models.CharField(
+        max_length=10, blank=True,
+        choices=[('STRONG','STRONG'),('MODERATE','MODERATE'),('WEAK','WEAK')]
+    )
+    composition_hint = models.TextField(blank=True)
+    run_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'analytics_bundle_quality_score'
+        unique_together = [('project', 'bundle_type')]
+
+
+class SalesPackage(models.Model):
+    TRANSACTION_TYPES = [
+        ('sale', 'Outright Sale'),
+        ('license', 'License'),
+        ('co_dev', 'Co-development'),
+        ('cross', 'Cross-license'),
+    ]
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('ready', 'Ready'),
+        ('sent', 'Sent'),
+        ('closed', 'Closed'),
+    ]
+    ARCHETYPE_CHOICES = [
+        ('OC-DEF', 'Operating Co. — Defensive'),
+        ('OC-OFF', 'Operating Co. — Offensive'),
+        ('OC-EXP', 'Operating Co. — Market Expansion'),
+        ('NPE-LIC', 'NPE — Licensing'),
+        ('NPE-LIT', 'NPE — Litigation'),
+        ('DEF-AGG', 'Defensive Aggregator'),
+        ('LIT-FIN', 'Litigation Finance'),
+    ]
+    PATTERN_CHOICES = [
+        ('A', 'Strategic Flagship'),
+        ('B', 'Compressed Strategic'),
+        ('C', 'Technical-Spec'),
+        ('D', 'Single-Asset Narrow'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        AnalyticsProject, on_delete=models.CASCADE, related_name='sales_packages'
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    bundle_codes = models.JSONField(default=list, help_text='List of bundle codes included in this package')
+    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES, default='sale')
+    # Pricing is a future feature — fields reserved but not exposed in UI yet
+    asking_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    royalty_rate = models.DecimalField(max_digits=6, decimal_places=4, null=True, blank=True)
+    buyer_targets = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    # Value Proposition fields
+    primary_archetype = models.CharField(max_length=10, blank=True, choices=ARCHETYPE_CHOICES)
+    secondary_archetype = models.CharField(max_length=10, blank=True, choices=ARCHETYPE_CHOICES)
+    listing_pattern = models.CharField(max_length=1, blank=True, choices=PATTERN_CHOICES)
+    mcl_entries = models.JSONField(default=list, help_text='Market Context Library — sourced T4 facts per package')
+    generated_teaser = models.TextField(blank=True)
+    generated_listing = models.TextField(blank=True)
+    listing_tier_report = models.JSONField(null=True, blank=True)
+    listing_generated_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        get_user_model(), on_delete=models.SET_NULL, null=True, blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'analytics_sales_package'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.get_status_display()})'
+
+    @property
+    def bundle_count(self):
+        return len(self.bundle_codes or [])
