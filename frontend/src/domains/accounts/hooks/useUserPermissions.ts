@@ -22,7 +22,8 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
     // Sidebar Navigation
     'sidebar_dashboard', 'sidebar_patent_search', 'sidebar_projects', 'sidebar_workflows', 'sidebar_patents', 'sidebar_prior_art',
     'sidebar_infringement', 'sidebar_analytics', 'sidebar_attorney_network',
-    'sidebar_collaboration', 'sidebar_admin_panel', 'sidebar_settings', 'sidebar_help'
+    'sidebar_collaboration', 'sidebar_admin_panel', 'sidebar_settings', 'sidebar_help',
+    'sidebar_web_search', 'sidebar_fcc_data', 'sidebar_sales_package', 'sidebar_technology_areas', 'sidebar_competitors'
   ],
   supervisor: [
     'dashboard_access', 'profile_management', 'notifications',
@@ -34,7 +35,8 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
     'file_upload', 'file_download', 'data_export',
     // Sidebar Navigation
     'sidebar_dashboard', 'sidebar_patent_search', 'sidebar_projects', 'sidebar_workflows', 'sidebar_patents', 'sidebar_prior_art',
-    'sidebar_infringement', 'sidebar_analytics', 'sidebar_collaboration', 'sidebar_settings', 'sidebar_help'
+    'sidebar_infringement', 'sidebar_analytics', 'sidebar_collaboration', 'sidebar_settings', 'sidebar_help',
+    'sidebar_web_search', 'sidebar_fcc_data', 'sidebar_technology_areas', 'sidebar_competitors'
   ],
   lead_attorney: [
     'dashboard_access', 'profile_management', 'notifications',
@@ -47,7 +49,8 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
     // Sidebar Navigation
     'sidebar_dashboard', 'sidebar_patent_search', 'sidebar_projects', 'sidebar_workflows', 'sidebar_patents', 'sidebar_prior_art',
     'sidebar_infringement', 'sidebar_analytics', 'sidebar_attorney_network',
-    'sidebar_collaboration', 'sidebar_settings', 'sidebar_help'
+    'sidebar_collaboration', 'sidebar_settings', 'sidebar_help',
+    'sidebar_web_search', 'sidebar_sales_package', 'sidebar_technology_areas'
   ],
   attorney: [
     'dashboard_access', 'profile_management', 'notifications',
@@ -59,7 +62,8 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
     'file_upload', 'file_download',
     // Sidebar Navigation
     'sidebar_dashboard', 'sidebar_patent_search', 'sidebar_projects', 'sidebar_workflows', 'sidebar_patents', 'sidebar_prior_art',
-    'sidebar_attorney_network', 'sidebar_collaboration', 'sidebar_settings', 'sidebar_help'
+    'sidebar_attorney_network', 'sidebar_collaboration', 'sidebar_settings', 'sidebar_help',
+    'sidebar_web_search'
   ],
   paralegal: [
     'dashboard_access', 'profile_management', 'notifications',
@@ -71,7 +75,8 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
     'file_upload', 'file_download',
     // Sidebar Navigation
     'sidebar_dashboard', 'sidebar_patent_search', 'sidebar_projects', 'sidebar_workflows', 'sidebar_patents', 'sidebar_prior_art',
-    'sidebar_collaboration', 'sidebar_settings', 'sidebar_help'
+    'sidebar_collaboration', 'sidebar_settings', 'sidebar_help',
+    'sidebar_web_search'
   ],
   analyst: [
     'dashboard_access', 'profile_management', 'notifications',
@@ -83,7 +88,8 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
     'file_upload', 'file_download', 'data_export',
     // Sidebar Navigation
     'sidebar_dashboard', 'sidebar_patent_search', 'sidebar_projects', 'sidebar_workflows', 'sidebar_patents', 'sidebar_prior_art',
-    'sidebar_infringement', 'sidebar_analytics', 'sidebar_collaboration', 'sidebar_settings', 'sidebar_help'
+    'sidebar_infringement', 'sidebar_analytics', 'sidebar_collaboration', 'sidebar_settings', 'sidebar_help',
+    'sidebar_web_search', 'sidebar_fcc_data', 'sidebar_technology_areas', 'sidebar_competitors'
   ],
   client: [
     'dashboard_access', 'profile_management', 'notifications',

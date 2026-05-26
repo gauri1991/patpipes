@@ -26,7 +26,12 @@ import {
   HelpCircle,
   SearchCheck,
   Tags,
-  MessageSquare
+  MessageSquare,
+  Globe,
+  Radio,
+  Package,
+  Cpu,
+  TrendingUp
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -146,6 +151,41 @@ const navigation: NavigationItem[] = [
     icon: MessageSquare,
     description: 'Team collaboration and comments',
     permission: 'sidebar_collaboration'
+  },
+  {
+    name: 'Web Search',
+    href: '/dashboard/web-search',
+    icon: Globe,
+    description: 'Web and patent search',
+    permission: 'sidebar_web_search'
+  },
+  {
+    name: 'FCC Data',
+    href: '/dashboard/fcc-data',
+    icon: Radio,
+    description: 'FCC licensing and grant data',
+    permission: 'sidebar_fcc_data'
+  },
+  {
+    name: 'Sales Package',
+    href: '/dashboard/sales-package',
+    icon: Package,
+    description: 'Patent sales and licensing packages',
+    permission: 'sidebar_sales_package'
+  },
+  {
+    name: 'Technology Areas',
+    href: '/dashboard/technology-areas',
+    icon: Cpu,
+    description: 'Technology classification and areas',
+    permission: 'sidebar_technology_areas'
+  },
+  {
+    name: 'Competitors',
+    href: '/dashboard/competitors',
+    icon: TrendingUp,
+    description: 'Competitor analysis and tracking',
+    permission: 'sidebar_competitors'
   },
 ];
 
