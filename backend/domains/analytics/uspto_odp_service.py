@@ -62,7 +62,7 @@ class USPTOODPClient:
                     try:
                         return signer.unsign(signed_key)
                     except Exception:
-                        return signed_key
+                        pass  # bad signature (wrong SECRET_KEY?) — fall through to settings
         except Exception:
             pass
         # Fallback to settings
