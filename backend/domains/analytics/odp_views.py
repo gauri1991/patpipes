@@ -39,13 +39,55 @@ def _error_response(exc: Exception):
     )
 
 
-def _extract_element_text(element):
-    """Recursively extract all text from an XML element and its children."""
-    return (ET.tostring(element, encoding='unicode', method='text') or '').strip()
+def _all_text(element) -> str:
+    """Concatenate all text content from an element and its descendants."""
+    return ''.join(element.itertext()).strip()
+
+
+def _parse_claim_element(claim_el) -> str:
+    """
+    Convert a <claim> XML element to readable text.
+
+    USPTO grant XML structure:
+      <claim>
+        <claim-text>1. A method comprising:        ← preamble (direct text)
+          <claim-text>step one;</claim-text>        ← each limitation is a nested child
+          <claim-text>step two.</claim-text>
+        </claim-text>
+      </claim>
+
+    We join the preamble and each step with newlines so the rendered text
+    preserves the multi-step structure instead of running everything together.
+    """
+    outer = claim_el.find('claim-text')
+    if outer is None:
+        return _all_text(claim_el)
+
+    steps = outer.findall('claim-text')
+    if not steps:
+        # Simple single-line claim (e.g. most dependent claims)
+        return _all_text(outer)
+
+    # Preamble = the direct text of the outer <claim-text> before any children
+    preamble_parts = []
+    if outer.text:
+        preamble_parts.append(outer.text.strip())
+    # Inline tail text of child elements that sit between nested <claim-text>s is rare
+    # but handle it to avoid data loss.
+    # We reconstruct by walking children until we hit a <claim-text> child.
+    lines = []
+    if preamble_parts:
+        lines.append(' '.join(preamble_parts))
+    for step in steps:
+        step_text = _all_text(step)
+        if step_text:
+            lines.append(step_text)
+
+    return '\n'.join(lines)
 
 
 def _fetch_and_parse_xml(url, api_key):
-    """Fetch a USPTO XML document and parse it into structured text sections.
+    """Fetch a USPTO XML document and parse it into structured sections.
 
     Returns {'abstract': str, 'description': str, 'claims': [str, ...]}
     or None if fetch/parse fails.
@@ -59,20 +101,20 @@ def _fetch_and_parse_xml(url, api_key):
 
         root = ET.fromstring(resp.content)
 
-        # Abstract — may be at different paths depending on grant vs publication
+        # Abstract
         abstract_el = root.find('.//abstract')
-        abstract = _extract_element_text(abstract_el) if abstract_el is not None else ''
+        abstract = _all_text(abstract_el) if abstract_el is not None else ''
 
         # Description
         desc_el = root.find('.//description')
-        description = _extract_element_text(desc_el) if desc_el is not None else ''
+        description = _all_text(desc_el) if desc_el is not None else ''
 
-        # Claims — individual <claim> elements inside <claims> (or <us-claim-statement>)
+        # Claims — each <claim> child of <claims> becomes one entry
         claims = []
         claims_el = root.find('.//claims')
         if claims_el is not None:
-            for claim_el in claims_el.findall('.//claim'):
-                claim_text = _extract_element_text(claim_el)
+            for claim_el in claims_el.findall('claim'):
+                claim_text = _parse_claim_element(claim_el)
                 if claim_text:
                     claims.append(claim_text)
 

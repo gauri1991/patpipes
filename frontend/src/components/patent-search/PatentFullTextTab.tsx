@@ -38,10 +38,29 @@ function CollapsibleSection({
         {title}
       </button>
       {open && (
-        <div className="px-4 pb-4 text-sm leading-relaxed whitespace-pre-wrap border-t">
+        <div className="px-4 pb-4 text-sm leading-relaxed border-t">
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+function isDependent(claimText: string): boolean {
+  return /\bclaim\s+\d/i.test(claimText);
+}
+
+function ClaimBlock({ claim, index }: { claim: string; index: number }) {
+  const dependent = isDependent(claim);
+  return (
+    <div
+      className={`rounded-md border p-3 text-sm leading-relaxed whitespace-pre-wrap font-mono ${
+        dependent
+          ? 'border-border bg-muted/30 text-muted-foreground'
+          : 'border-primary/40 bg-primary/5'
+      }`}
+    >
+      {claim}
     </div>
   );
 }
@@ -51,21 +70,21 @@ function ParsedTextView({ text }: { text: ODPParsedText }) {
     <div className="space-y-3">
       {text.abstract && (
         <CollapsibleSection title="Abstract" defaultOpen>
-          <p className="pt-3">{text.abstract}</p>
+          <p className="pt-3 leading-relaxed">{text.abstract}</p>
         </CollapsibleSection>
       )}
       {text.description && (
         <CollapsibleSection title="Description">
-          <div className="pt-3">{text.description}</div>
+          <div className="pt-3 whitespace-pre-wrap leading-relaxed">{text.description}</div>
         </CollapsibleSection>
       )}
       {text.claims.length > 0 && (
         <CollapsibleSection title={`Claims (${text.claims.length})`} defaultOpen>
-          <ol className="list-decimal list-outside pl-5 pt-3 space-y-3">
+          <div className="pt-3 space-y-2">
             {text.claims.map((claim, i) => (
-              <li key={i}>{claim}</li>
+              <ClaimBlock key={i} claim={claim} index={i} />
             ))}
-          </ol>
+          </div>
         </CollapsibleSection>
       )}
     </div>
