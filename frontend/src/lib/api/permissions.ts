@@ -5,7 +5,7 @@
 
 import { TOKEN_STORAGE_KEYS } from './config';
 
-const API_BASE = 'http://localhost:8000/api/v1/accounts/permissions';
+const API_BASE = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/accounts/permissions`;
 
 /**
  * Get authorization headers with JWT token

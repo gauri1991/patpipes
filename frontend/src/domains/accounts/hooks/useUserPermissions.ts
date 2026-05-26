@@ -126,7 +126,7 @@ export function useUserPermissions() {
 
         if (token) {
           const response = await fetch(
-            `http://localhost:8000/api/v1/accounts/permissions/users/${user.id}/`,
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/accounts/permissions/users/${user.id}/`,
             {
               headers: {
                 'Content-Type': 'application/json',

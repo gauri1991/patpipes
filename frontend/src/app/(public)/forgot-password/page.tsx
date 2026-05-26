@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
-const API_BASE = 'http://localhost:8000/api/v1/accounts/auth';
+const API_BASE = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/accounts/auth`;
 
 const emailSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
