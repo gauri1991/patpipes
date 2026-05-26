@@ -3,11 +3,13 @@ Analytics admin
 """
 
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import (
     AnalyticsProject, TechnologyArea, PatentDataset, CompetitorProfile,
     GlobalCompetitorProfile, GlobalTechnologyArea,
     AnalyticsVisualization, AnalyticsReport, AnalyticsInsight, PatentRecord,
-    ColumnMappingRule, DatasetColumnMapping, DynamicPatentField
+    ColumnMappingRule, DatasetColumnMapping, DynamicPatentField,
+    LLMProviderConfig, AnalysisPromptTemplate,
 )
 
 
@@ -323,3 +325,133 @@ class DynamicPatentFieldAdmin(admin.ModelAdmin):
         updated = queryset.update(is_active=False)
         self.message_user(request, f"Deactivated {updated} dynamic fields.")
     deactivate_fields.short_description = "Deactivate selected fields"
+
+
+# ── LLM Provider Config ──────────────────────────────────────────────────────
+
+@admin.register(LLMProviderConfig)
+class LLMProviderConfigAdmin(admin.ModelAdmin):
+    list_display = ['display_name', 'provider', 'masked_key_display', 'is_active', 'test_status', 'last_tested_at', 'updated_at']
+    list_filter = ['provider', 'is_active', 'test_status']
+    search_fields = ['display_name', 'provider', 'notes']
+    readonly_fields = ['id', 'masked_key_display', 'last_tested_at', 'test_status', 'test_error', 'created_at', 'updated_at']
+
+    fieldsets = (
+        ('Provider', {
+            'fields': ('provider', 'display_name', 'is_active'),
+        }),
+        ('Credentials', {
+            'fields': ('api_key', 'masked_key_display', 'api_base_url'),
+            'description': 'The API key is stored in plaintext. Only superusers should access this page.',
+        }),
+        ('Test Status', {
+            'fields': ('test_status', 'test_error', 'last_tested_at'),
+            'classes': ('collapse',),
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+        }),
+        ('Metadata', {
+            'fields': ('id', 'updated_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    def masked_key_display(self, obj):
+        return obj.masked_key
+    masked_key_display.short_description = 'Masked Key'
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+# ── Analysis Prompt Templates ────────────────────────────────────────────────
+
+@admin.register(AnalysisPromptTemplate)
+class AnalysisPromptTemplateAdmin(admin.ModelAdmin):
+    list_display = [
+        'section_display', 'category', 'version', 'is_active',
+        'description', 'created_by', 'updated_at',
+    ]
+    list_filter = ['section', 'category', 'is_active']
+    search_fields = ['section', 'category', 'description', 'prompt_text']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'placeholders_help']
+
+    fieldsets = (
+        ('Identity', {
+            'fields': ('section', 'category', 'version', 'is_active'),
+        }),
+        ('Prompt', {
+            'fields': ('description', 'placeholders_help', 'prompt_text'),
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    PLACEHOLDER_DOCS = {
+        'bundle_attribute_extraction': (
+            '{patent_text} — title + abstract + first 5 claims\n'
+            '{fields_prompt} — bullet list of fields to score with descriptions'
+        ),
+        'group_a_classification': (
+            '{patent_text} — title + abstract + first 5 claims\n'
+            '{ipc_codes} — IPC classification codes from the patent record\n'
+            '{cpc_codes} — CPC classification codes from the patent record\n'
+            '{taxonomy_lines} — bullet list of GlobalTechnologyArea names/categories'
+        ),
+    }
+
+    def section_display(self, obj):
+        return obj.get_section_display()
+    section_display.short_description = 'Section'
+    section_display.admin_order_field = 'section'
+
+    def placeholders_help(self, obj):
+        docs = self.PLACEHOLDER_DOCS.get(obj.section, '')
+        if not docs:
+            return '—'
+        return format_html('<pre style="font-size:11px;background:#f8f8f8;padding:8px;border-radius:4px">{}</pre>', docs)
+    placeholders_help.short_description = 'Available Placeholders'
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    actions = ['activate_prompts', 'deactivate_prompts', 'duplicate_as_new_version']
+
+    def activate_prompts(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'Activated {updated} prompt template(s).')
+    activate_prompts.short_description = 'Activate selected prompts'
+
+    def deactivate_prompts(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'Deactivated {updated} prompt template(s).')
+    deactivate_prompts.short_description = 'Deactivate selected prompts'
+
+    def duplicate_as_new_version(self, request, queryset):
+        created = 0
+        for tpl in queryset:
+            latest = (
+                AnalysisPromptTemplate.objects
+                .filter(section=tpl.section, category=tpl.category)
+                .order_by('-version')
+                .values_list('version', flat=True)
+                .first()
+            ) or 0
+            AnalysisPromptTemplate.objects.create(
+                section=tpl.section,
+                category=tpl.category,
+                version=latest + 1,
+                prompt_text=tpl.prompt_text,
+                description=f'Copy of v{tpl.version}',
+                is_active=False,
+                created_by=request.user,
+            )
+            created += 1
+        self.message_user(request, f'Created {created} new version(s) as drafts (inactive).')
+    duplicate_as_new_version.short_description = 'Duplicate as new version (draft)'

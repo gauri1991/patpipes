@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search,
@@ -96,10 +96,16 @@ export function AdvancedSearchBar({
     getQueryParams,
   } = search;
 
-  // Notify parent of filter changes
+  // Keep a stable ref so the effect below never re-fires because the parent
+  // passed a new inline function reference.
+  const onFilterChangeRef = useRef(onFilterChange);
+  useEffect(() => { onFilterChangeRef.current = onFilterChange; });
+
+  // Notify parent of filter changes (onFilterChange intentionally excluded from
+  // deps — we call via ref to avoid infinite loops with inline callbacks).
   useEffect(() => {
-    onFilterChange(getQueryParams());
-  }, [debouncedSearchTerm, filters, sortBy, sortDirection, getQueryParams, onFilterChange]);
+    onFilterChangeRef.current(getQueryParams());
+  }, [debouncedSearchTerm, filters, sortBy, sortDirection, getQueryParams]);
 
   const activeFilterCount = filters.filter(f => {
     if (Array.isArray(f.value)) return f.value.length > 0;

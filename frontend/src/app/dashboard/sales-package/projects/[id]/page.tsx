@@ -28,11 +28,15 @@ import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
+  Sheet, SheetContent, SheetHeader, SheetTitle,
+} from '@/components/ui/sheet';
+import {
   analyticsApi,
   BundleAnalysisResult,
   BundleQualityRow,
   BundleConfiguration,
   BundleAttributes,
+  PatentRecordText,
   SalesPackage,
   SalesPackageCreateData,
   SalesPackageArchetype,
@@ -346,6 +350,10 @@ export default function SalesPackageProjectDetail() {
   const [attrSearch, setAttrSearch] = useState('');
   const [attrLoading, setAttrLoading] = useState(false);
   const [editingAttr, setEditingAttr] = useState<BundleAttributes | null>(null);
+  const [viewingAttr, setViewingAttr] = useState<BundleAttributes | null>(null);
+  const [patentText, setPatentText] = useState<PatentRecordText | null>(null);
+  const [patentTextLoading, setPatentTextLoading] = useState(false);
+  const [patentDetailTab, setPatentDetailTab] = useState<'attributes' | 'text' | 'claims'>('attributes');
   const [selectedAttrIds, setSelectedAttrIds] = useState<Set<string>>(new Set());
   const [aiScoring, setAiScoring] = useState(false);
 
@@ -846,8 +854,21 @@ export default function SalesPackageProjectDetail() {
                             </td></tr>
                           )}
                           {filteredAttrs.map(attr => (
-                            <tr key={attr.patent_record_id} className="border-b border-neutral-50 hover:bg-neutral-50">
-                              <td className="px-4 py-2">
+                            <tr
+                              key={attr.patent_record_id}
+                              className="border-b border-neutral-50 hover:bg-neutral-50 cursor-pointer"
+                              onClick={() => {
+                                setViewingAttr(attr);
+                                setPatentText(null);
+                                setPatentDetailTab('attributes');
+                                setPatentTextLoading(true);
+                                analyticsApi.getPatentRecordText(projectId, attr.patent_record_id)
+                                  .then(res => { if (res.success && res.data) setPatentText(res.data); })
+                                  .catch(() => {})
+                                  .finally(() => setPatentTextLoading(false));
+                              }}
+                            >
+                              <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={selectedAttrIds.has(attr.patent_record_id)}
@@ -859,7 +880,7 @@ export default function SalesPackageProjectDetail() {
                                 />
                               </td>
                               <td className="px-4 py-2">
-                                <div className="font-medium text-neutral-800 truncate max-w-xs">{attr.title || '—'}</div>
+                                <div className="font-medium text-neutral-800 truncate max-w-xs hover:text-neutral-600">{attr.title || '—'}</div>
                                 <div className="text-neutral-400 font-mono">{attr.patent_id}</div>
                               </td>
                               <td className="px-4 py-2 text-neutral-600">{attr.a1_primary_domain || '—'}</td>
@@ -882,7 +903,7 @@ export default function SalesPackageProjectDetail() {
                                   {attr.ai_extracted_fields?.length ? 'AI' : attr.manually_set_fields?.length ? 'Manual' : 'Derived'}
                                 </span>
                               </td>
-                              <td className="px-4 py-2 text-right">
+                              <td className="px-4 py-2 text-right" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-end gap-1">
                                   <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
                                     onClick={() => scoreSingleWithAI(attr.patent_record_id)}>
@@ -2211,6 +2232,346 @@ export default function SalesPackageProjectDetail() {
               </TabsContent>
             </Tabs>
           </div>
+
+        {/* ── Patent detail sheet ── */}
+        <Sheet open={!!viewingAttr} onOpenChange={open => { if (!open) { setViewingAttr(null); setPatentText(null); } }}>
+          <SheetContent side="right" className="w-[560px] sm:max-w-[560px] overflow-y-auto p-0">
+            {viewingAttr && (
+              <>
+                <SheetHeader className="px-5 py-4 border-b border-neutral-100 sticky top-0 bg-white z-10">
+                  <SheetTitle className="text-sm font-semibold text-neutral-900 leading-tight pr-8">
+                    {viewingAttr.title || 'Patent Details'}
+                  </SheetTitle>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className="font-mono text-xs text-neutral-500">{viewingAttr.patent_id}</span>
+                    {patentText?.assignee && <span className="text-xs text-neutral-500 truncate max-w-[180px]">{patentText.assignee}</span>}
+                    {viewingAttr.ai_extracted_fields?.length > 0 && (
+                      <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">AI</span>
+                    )}
+                    {viewingAttr.manually_set_fields?.length > 0 && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Manual</span>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-xs ml-auto"
+                      onClick={() => { setEditingAttr(viewingAttr); setViewingAttr(null); }}
+                    >
+                      <Edit2 className="w-3 h-3 mr-1" /> Edit
+                    </Button>
+                  </div>
+
+                  {/* Inline sub-tabs */}
+                  <div className="flex gap-0 border-b border-neutral-100 mt-2 -mb-4">
+                    {([
+                      { key: 'attributes', label: 'Attributes' },
+                      { key: 'text', label: 'Abstract' },
+                      { key: 'claims', label: `Claims${patentText?.independent_claims_count ? ` (${patentText.independent_claims_count} ind.)` : ''}` },
+                    ] as { key: typeof patentDetailTab; label: string }[]).map(t => (
+                      <button
+                        key={t.key}
+                        onClick={() => setPatentDetailTab(t.key)}
+                        className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${
+                          patentDetailTab === t.key
+                            ? 'border-neutral-900 text-neutral-900'
+                            : 'border-transparent text-neutral-500 hover:text-neutral-700'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                    {patentTextLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-400 self-center ml-2" />}
+                  </div>
+                </SheetHeader>
+
+                <div className="px-5 py-4 space-y-5 text-xs">
+
+                  {/* ── Text tab: Abstract + metadata ── */}
+                  {patentDetailTab === 'text' && (
+                    <div className="space-y-4">
+                      {patentTextLoading && !patentText && (
+                        <div className="flex items-center gap-2 text-neutral-400 py-8 justify-center">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Loading patent text…
+                        </div>
+                      )}
+                      {!patentTextLoading && !patentText && (
+                        <p className="text-neutral-400 text-center py-8">No text data available for this patent.</p>
+                      )}
+                      {patentText && (
+                        <>
+                          {/* Metadata row */}
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                            {[
+                              { label: 'Assignee', val: patentText.assignee },
+                              { label: 'Inventor', val: patentText.inventor },
+                              { label: 'Filing Date', val: patentText.filing_date },
+                              { label: 'Publication Date', val: patentText.publication_date },
+                              { label: 'Grant Date', val: patentText.grant_date },
+                              { label: 'Type', val: patentText.patent_type },
+                              { label: 'Country', val: patentText.country_code },
+                              { label: 'Legal Status', val: patentText.legal_status },
+                              { label: 'IPC', val: patentText.ipc_classification },
+                              { label: 'CPC', val: patentText.cpc_classification },
+                            ].map(f => f.val ? (
+                              <div key={f.label}>
+                                <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                                <p className="text-neutral-800 font-medium break-words">{f.val}</p>
+                              </div>
+                            ) : null)}
+                          </div>
+                          {/* Abstract */}
+                          {patentText.abstract ? (
+                            <div>
+                              <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">Abstract</p>
+                              <p className="text-neutral-800 leading-relaxed whitespace-pre-wrap">{patentText.abstract}</p>
+                            </div>
+                          ) : (
+                            <p className="text-neutral-400 text-center py-4">No abstract available.</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Claims tab ── */}
+                  {patentDetailTab === 'claims' && (
+                    <div className="space-y-3">
+                      {patentTextLoading && !patentText && (
+                        <div className="flex items-center gap-2 text-neutral-400 py-8 justify-center">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Loading claims…
+                        </div>
+                      )}
+                      {!patentTextLoading && !patentText && (
+                        <p className="text-neutral-400 text-center py-8">No claims data available.</p>
+                      )}
+                      {patentText && patentText.claims_structure?.length > 0 ? (
+                        patentText.claims_structure.map((claim, i) => (
+                          <div
+                            key={i}
+                            className={`p-3 rounded-lg border text-xs ${
+                              claim.type === 'independent'
+                                ? 'border-neutral-300 bg-white'
+                                : 'border-neutral-100 bg-neutral-50 ml-4'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="font-semibold text-neutral-700">Claim {claim.number}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${claim.type === 'independent' ? 'bg-neutral-900 text-white' : 'bg-neutral-200 text-neutral-600'}`}>
+                                {claim.type}
+                              </span>
+                              {claim.references?.length > 0 && (
+                                <span className="text-neutral-400">→ {claim.references.join(', ')}</span>
+                              )}
+                            </div>
+                            <p className="text-neutral-700 leading-relaxed">{claim.text}</p>
+                          </div>
+                        ))
+                      ) : patentText && patentText.claims ? (
+                        <div className="p-3 rounded-lg border border-neutral-200 bg-neutral-50">
+                          <p className="text-neutral-700 leading-relaxed whitespace-pre-wrap">{patentText.claims}</p>
+                        </div>
+                      ) : patentText ? (
+                        <p className="text-neutral-400 text-center py-8">No claims text available.</p>
+                      ) : null}
+                    </div>
+                  )}
+
+                  {/* ── Attributes tab (existing content) ── */}
+                  {patentDetailTab === 'attributes' && (<>
+                  {/* Group A */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">A — Technology Classification</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'Primary Domain', val: viewingAttr.a1_primary_domain },
+                        { label: 'Tech Subcategory', val: viewingAttr.a2_tech_subcategory },
+                        { label: 'Stack Layer', val: viewingAttr.a3_stack_layer },
+                        { label: 'Subsystem', val: viewingAttr.a4_subsystem },
+                        { label: 'Use Case', val: viewingAttr.a5_use_case },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val || '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group B */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">B — Standards & Ecosystem</p>
+                    <div className="grid grid-cols-3 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'SEP Potential', val: viewingAttr.b1_sep_potential?.toString() },
+                        { label: 'Standard Tagged', val: viewingAttr.b2_standard_tagged },
+                        { label: 'Interface Role', val: viewingAttr.b3_interface_role?.toString() },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val ?? '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group C */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">C — Claim Characteristics</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'Claim Type', val: viewingAttr.c1_claim_type },
+                        { label: 'Breadth (0–3)', val: viewingAttr.c2_breadth?.toString() },
+                        { label: 'Claim Count', val: viewingAttr.c3_claim_count?.toString() },
+                        { label: 'Design-Around Difficulty', val: viewingAttr.c4_design_around_difficulty?.toString() },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val ?? '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group D */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">D — Detectability</p>
+                    <div className="grid grid-cols-3 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'External Detect.', val: viewingAttr.d1_external_detectability?.toString() },
+                        { label: 'Teardown Detect.', val: viewingAttr.d2_teardown_detectability?.toString() },
+                        { label: 'Reads on Products', val: viewingAttr.d3_reads_on_products?.toString() },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val ?? '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group E */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">E — Portfolio Position</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'Family Size', val: viewingAttr.e1_family_size?.toString() },
+                        { label: 'Prosecution Status', val: viewingAttr.e2_prosecution_status },
+                        { label: 'Continuation', val: viewingAttr.e3_continuation != null ? (viewingAttr.e3_continuation ? 'Yes' : 'No') : undefined },
+                        { label: 'Remaining Term', val: viewingAttr.e4_remaining_term_years != null ? `${viewingAttr.e4_remaining_term_years}y` : undefined },
+                        { label: 'Maintenance Status', val: viewingAttr.e5_maintenance_status },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val ?? '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group F */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">F — Jurisdiction</p>
+                    <div className="grid grid-cols-3 gap-x-4 gap-y-2">
+                      <div>
+                        <p className="text-neutral-400 mb-0.5">Jurisdictions</p>
+                        <p className="text-neutral-800 font-medium">{viewingAttr.f1_jurisdictions?.join(', ') || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-400 mb-0.5">Trilateral</p>
+                        <p className="text-neutral-800 font-medium">{viewingAttr.f2_trilateral != null ? (viewingAttr.f2_trilateral ? 'Yes' : 'No') : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-400 mb-0.5">Major Market Score</p>
+                        <p className="text-neutral-800 font-medium">{viewingAttr.f3_major_market_score?.toString() ?? '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Group G */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">G — Market Context</p>
+                    <div className="grid grid-cols-3 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'Convergence Theme', val: viewingAttr.g1_convergence_theme },
+                        { label: 'Generation Tag', val: viewingAttr.g2_generation_tag },
+                        { label: 'Cross-Industry', val: viewingAttr.g3_cross_industry_applicability?.toString() },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val ?? '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group H */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">H — Quality & Vulnerability</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'Claim Strength (0–3)', val: viewingAttr.h1_claim_strength?.toString() },
+                        { label: 'Prior Art Exposure', val: viewingAttr.h2_prior_art_exposure?.toString() },
+                        { label: 'Prosecution Risk', val: viewingAttr.h3_prosecution_risk?.toString() },
+                        { label: 'Divided Infringement', val: viewingAttr.h4_divided_infringement_risk != null ? (viewingAttr.h4_divided_infringement_risk ? 'Yes' : 'No') : undefined },
+                        { label: 'Forward Citations', val: viewingAttr.h5_forward_citations?.toString() },
+                        { label: 'Backward Citations', val: viewingAttr.h6_backward_citations?.toString() },
+                        { label: 'Litigation History', val: viewingAttr.h7_litigation_history },
+                        { label: 'Chain of Title', val: viewingAttr.h8_chain_of_title },
+                        { label: 'EOU Availability', val: viewingAttr.h9_eou_availability },
+                        { label: 'Encumbrance Status', val: viewingAttr.h10_encumbrance_status },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className={`font-medium ${f.label.includes('Strength') && f.val ? (Number(f.val) >= 2 ? 'text-green-600' : Number(f.val) === 1 ? 'text-amber-600' : 'text-red-500') : 'text-neutral-800'}`}>
+                            {f.val ?? '—'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Group I */}
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">I — Commercial Relevance</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        { label: 'Product Mapping Confidence', val: viewingAttr.i1_product_mapping_confidence?.toString() },
+                        { label: 'Implementation Maturity', val: viewingAttr.i2_implementation_maturity },
+                        { label: 'Adjacent Market Reread', val: viewingAttr.i3_adjacent_market_reread?.toString() },
+                        { label: 'Workaround Complexity', val: viewingAttr.i4_workaround_complexity?.toString() },
+                      ].map(f => (
+                        <div key={f.label}>
+                          <p className="text-neutral-400 mb-0.5">{f.label}</p>
+                          <p className="text-neutral-800 font-medium">{f.val ?? '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Provenance */}
+                  <div className="pt-2 border-t border-neutral-100">
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">Provenance</p>
+                    <div className="space-y-1.5">
+                      {viewingAttr.last_ai_extraction && (
+                        <p className="text-neutral-500">Last AI extraction: <span className="text-neutral-700">{new Date(viewingAttr.last_ai_extraction).toLocaleString()}</span></p>
+                      )}
+                      {viewingAttr.ai_extracted_fields?.length > 0 && (
+                        <p className="text-neutral-500">AI fields ({viewingAttr.ai_extracted_fields.length}): <span className="text-neutral-600 font-mono">{viewingAttr.ai_extracted_fields.join(', ')}</span></p>
+                      )}
+                      {viewingAttr.manually_set_fields?.length > 0 && (
+                        <p className="text-neutral-500">Manual fields ({viewingAttr.manually_set_fields.length}): <span className="text-neutral-600 font-mono">{viewingAttr.manually_set_fields.join(', ')}</span></p>
+                      )}
+                      {viewingAttr.derived_fields?.length > 0 && (
+                        <p className="text-neutral-500">Derived fields ({viewingAttr.derived_fields.length}): <span className="text-neutral-600 font-mono">{viewingAttr.derived_fields.join(', ')}</span></p>
+                      )}
+                    </div>
+                  </div>
+                  </>)}
+                </div>
+              </>
+            )}
+          </SheetContent>
+        </Sheet>
 
         {/* ── Attribute edit dialog ── */}
         {editingAttr && (

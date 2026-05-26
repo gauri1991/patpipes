@@ -24,6 +24,8 @@ import {
   AlertCircle,
   CheckCircle,
   Loader2,
+  Pencil,
+  X,
 } from 'lucide-react';
 import { ApiClient } from '@/services/apiClient';
 
@@ -152,6 +154,19 @@ export function PromptManagementPanel() {
     }
   };
 
+  const editTemplate = async (id: string, data: { prompt_text: string; description: string }) => {
+    try {
+      const res = await ApiClient.put<PromptTemplate>(`${ADMIN_BASE}/prompts/${id}/`, data);
+      if (res.success && res.data) {
+        setTemplates((prev) => prev.map((t) => (t.id === id ? res.data! : t)));
+      } else {
+        setError(res.error || 'Failed to save template.');
+      }
+    } catch {
+      setError('Failed to save template.');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -248,6 +263,7 @@ export function PromptManagementPanel() {
               onShowHistory={() => showHistory(tpl.section, tpl.category)}
               onToggleActive={() => toggleActive(tpl)}
               onDelete={() => deleteTemplate(tpl.id)}
+              onEdit={(data) => editTemplate(tpl.id, data)}
             />
           ))}
         </div>
@@ -265,21 +281,44 @@ function PromptCard({
   onShowHistory,
   onToggleActive,
   onDelete,
+  onEdit,
 }: {
   template: PromptTemplate;
   onShowHistory: () => void;
   onToggleActive: () => void;
   onDelete: () => void;
+  onEdit: (data: { prompt_text: string; description: string }) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(template.prompt_text);
+  const [editDesc, setEditDesc] = useState(template.description);
+  const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleEditOpen = () => {
+    setEditText(template.prompt_text);
+    setEditDesc(template.description);
+    setEditing(true);
+  };
+
+  const handleEditCancel = () => {
+    setEditing(false);
+  };
+
+  const handleEditSave = async () => {
+    setSaving(true);
+    await onEdit({ prompt_text: editText, description: editDesc });
+    setSaving(false);
+    setEditing(false);
+  };
 
   return (
     <div className="border rounded-lg">
       <button
         type="button"
         className="flex items-center gap-2 w-full px-4 py-3 text-left text-sm hover:bg-muted/50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => { setExpanded(!expanded); if (editing) setEditing(false); }}
         aria-expanded={expanded}
       >
         {expanded ? (
@@ -303,52 +342,110 @@ function PromptCard({
 
       {expanded && (
         <div className="px-4 pb-4 border-t pt-3 space-y-3">
-          {template.description && (
+          {/* Description */}
+          {!editing && template.description && (
             <p className="text-xs text-muted-foreground">{template.description}</p>
           )}
-          <pre className="text-xs bg-muted/50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
-            {template.prompt_text}
-          </pre>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Clock className="h-3 w-3" />
-            Created: {new Date(template.created_at).toLocaleString()}
-            {template.created_by && <span>by {template.created_by}</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onShowHistory}>
-              <History className="h-3 w-3 mr-1" />
-              History
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onToggleActive}
-            >
-              {template.is_active ? 'Deactivate' : 'Activate'}
-            </Button>
-            {!confirmDelete ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-destructive"
-                onClick={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="h-3 w-3 mr-1" />
-                Delete
+
+          {/* View mode */}
+          {!editing && (
+            <pre className="text-xs bg-muted/50 rounded p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
+              {template.prompt_text}
+            </pre>
+          )}
+
+          {/* Edit mode */}
+          {editing && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium block mb-1">Description</label>
+                <Input
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  placeholder="Brief description of this prompt template..."
+                  className="text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1">
+                  Prompt Text
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    (use {'{placeholder}'} syntax for template variables)
+                  </span>
+                </label>
+                <Textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  rows={16}
+                  className="font-mono text-xs resize-y"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={handleEditSave} disabled={saving || !editText.trim()}>
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Save Changes
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleEditCancel} disabled={saving}>
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Metadata row */}
+          {!editing && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              Updated: {new Date(template.updated_at).toLocaleString()}
+              {template.created_by && <span>by {template.created_by}</span>}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          {!editing && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" size="sm" onClick={handleEditOpen}>
+                <Pencil className="h-3 w-3 mr-1" />
+                Edit
               </Button>
-            ) : (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => {
-                  onDelete();
-                  setConfirmDelete(false);
-                }}
-              >
-                Confirm Delete
+              <Button variant="outline" size="sm" onClick={onShowHistory}>
+                <History className="h-3 w-3 mr-1" />
+                History
               </Button>
-            )}
-          </div>
+              <Button variant="outline" size="sm" onClick={onToggleActive}>
+                {template.is_active ? 'Deactivate' : 'Activate'}
+              </Button>
+              {!confirmDelete ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" />
+                  Delete
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => { onDelete(); setConfirmDelete(false); }}
+                  >
+                    Confirm Delete
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+                    Cancel
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

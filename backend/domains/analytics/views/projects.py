@@ -34,6 +34,58 @@ from ..serializers_simple import SimpleAnalyticsProjectSerializer
 from ..services import AnalyticsDataProcessor, ReportGenerator, VisualizationEngine
 from ..file_processors import process_patent_dataset
 
+
+def _parse_claims_text(raw: str) -> list:
+    """Parse claims stored as newline-separated Python-dict strings or plain text.
+
+    Handles the format: {'text': '<b>1</b>. Claim text...', 'number': 1}
+    Returns a list of {number, text, type, references} dicts.
+    """
+    import ast
+    import re
+
+    if not raw:
+        return []
+
+    # Try line-by-line Python-dict format first
+    lines = [l.strip() for l in raw.strip().split('\n') if l.strip()]
+    parsed = []
+    for line in lines:
+        if not line.startswith('{'):
+            continue
+        try:
+            d = ast.literal_eval(line)
+        except Exception:
+            continue
+        text = re.sub(r'<[^>]+>', '', d.get('text', '')).strip()
+        num = str(d.get('number', str(len(parsed) + 1)))
+        # Strip leading "N. " prefix since we display the number separately
+        text = re.sub(r'^\d+\.\s*', '', text).strip()
+        # Collapse excessive blank lines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        refs = re.findall(r'\bof claim[s]?\s+(\d+)', text, re.I)
+        claim_type = 'dependent' if refs else 'independent'
+        parsed.append({'number': num, 'text': text, 'type': claim_type, 'references': refs})
+
+    if parsed:
+        return parsed
+
+    # Fallback: split by "N." pattern at the start of lines
+    chunks = re.split(r'(?m)^(\d+)\.\s', raw.strip())
+    if len(chunks) > 1:
+        # chunks = ['', '1', 'text1', '2', 'text2', ...]
+        i = 1
+        while i + 1 < len(chunks):
+            num = chunks[i].strip()
+            text = f"{num}. {chunks[i+1].strip()}"
+            refs = re.findall(r'\bof claim[s]?\s+(\d+)', text, re.I)
+            claim_type = 'dependent' if refs else 'independent'
+            parsed.append({'number': num, 'text': text, 'type': claim_type, 'references': refs})
+            i += 2
+
+    return parsed
+
+
 class AnalyticsProjectViewSet(viewsets.ModelViewSet):
     """Analytics project management"""
 
@@ -1136,6 +1188,54 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
             return Response({'updated': updated})
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'], url_path=r'patent-record-text/(?P<record_id>[^/.]+)')
+    def patent_record_text(self, request, pk=None, record_id=None):
+        """Return text fields for a PatentRecord (abstract, claims, metadata).
+
+        Only allows access to records belonging to this project's datasets.
+        """
+        import ast
+        import re
+
+        from ..models import PatentDataset, PatentRecord
+
+        project = self.get_object()
+        dataset_ids = PatentDataset.objects.filter(project=project).values_list('id', flat=True)
+        record = get_object_or_404(PatentRecord, id=record_id, dataset_id__in=dataset_ids)
+
+        # Build structured claims list from whatever format is stored
+        claims_structure = record.claims_structure  # already parsed JSON list (may be empty)
+        if not claims_structure and record.claims:
+            claims_structure = _parse_claims_text(record.claims)
+
+        ind_count = sum(1 for c in claims_structure if c.get('type') == 'independent') if claims_structure else record.independent_claims_count
+        dep_count = sum(1 for c in claims_structure if c.get('type') == 'dependent') if claims_structure else record.dependent_claims_count
+
+        return Response({
+            'id': str(record.id),
+            'patent_id': record.patent_id,
+            'title': record.title,
+            'abstract': record.abstract,
+            'claims': record.claims,
+            'claims_structure': claims_structure,
+            'independent_claims_count': ind_count,
+            'dependent_claims_count': dep_count,
+            'claims_count': record.claims_count,
+            'assignee': record.assignee,
+            'inventor': record.inventor,
+            'filing_date': str(record.filing_date) if record.filing_date else None,
+            'publication_date': str(record.publication_date) if record.publication_date else None,
+            'grant_date': str(record.grant_date) if record.grant_date else None,
+            'ipc_classification': record.ipc_classification,
+            'cpc_classification': record.cpc_classification,
+            'country_code': record.country_code,
+            'jurisdiction': record.jurisdiction,
+            'patent_type': record.patent_type,
+            'legal_status': record.legal_status,
+            'forward_citations': record.forward_citations,
+            'backward_citations': record.backward_citations,
+        })
 
     @action(detail=False, methods=['post'], url_path='from-portfolio')
     def from_portfolio(self, request):

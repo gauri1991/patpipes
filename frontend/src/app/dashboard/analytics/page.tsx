@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Plus, 
@@ -125,6 +125,13 @@ export default function AnalyticsPage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [showSettings, setShowSettings] = useState(false);
   const [, setAdvancedFilterParams] = useState<Record<string, string>>({});
+
+  const handleFilterChange = useCallback((params: Record<string, string>) => {
+    setAdvancedFilterParams(params);
+    setSearchTerm(params.search || '');
+    setStatusFilter(params.status || 'all');
+    setPriorityFilter(params.priority || 'all');
+  }, []); // setState setters are stable — no deps needed
 
   // Data hooks
   const { dashboard, loading: dashboardLoading } = useAnalyticsDashboard();
@@ -379,13 +386,7 @@ export default function AnalyticsPage() {
         <TabsContent value="projects" className="space-y-4">
           {/* Advanced Search and Filters */}
           <AdvancedSearchBar
-            onFilterChange={(params) => {
-              setAdvancedFilterParams(params);
-              // Sync with existing local filters for client-side filtering
-              setSearchTerm(params.search || '');
-              setStatusFilter(params.status || 'all');
-              setPriorityFilter(params.priority || 'all');
-            }}
+            onFilterChange={handleFilterChange}
             storageKey="analytics_projects"
             filterOptions={PROJECT_FILTER_OPTIONS}
             sortOptions={PROJECT_SORT_OPTIONS}

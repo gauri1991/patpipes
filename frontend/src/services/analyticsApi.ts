@@ -1417,6 +1417,15 @@ class AnalyticsApiService extends ApiClient {
     );
   }
 
+  async getPatentRecordText(
+    projectId: string,
+    recordId: string
+  ): Promise<ApiResponse<PatentRecordText>> {
+    return this.fetchWithAuth<PatentRecordText>(
+      `/analytics/api/projects/${projectId}/patent-record-text/${recordId}/`
+    );
+  }
+
   // ── Sales Package ──────────────────────────────────────────────────────────
 
   async getSalesPackages(projectId: string): Promise<ApiResponse<SalesPackage[]>> {
@@ -1602,6 +1611,38 @@ export interface BundleAttributes {
   ai_extracted_fields: string[];
   manually_set_fields: string[];
   last_ai_extraction: string | null;
+}
+
+export interface ClaimEntry {
+  number: string;
+  text: string;
+  type: 'independent' | 'dependent' | string;
+  references: string[];
+}
+
+export interface PatentRecordText {
+  id: string;
+  patent_id: string;
+  title: string;
+  abstract: string;
+  claims: string;
+  claims_structure: ClaimEntry[];
+  independent_claims_count: number;
+  dependent_claims_count: number;
+  claims_count: number | null;
+  assignee: string;
+  inventor: string;
+  filing_date: string | null;
+  publication_date: string | null;
+  grant_date: string | null;
+  ipc_classification: string;
+  cpc_classification: string;
+  country_code: string;
+  jurisdiction: string;
+  patent_type: string;
+  legal_status: string;
+  forward_citations: number | null;
+  backward_citations: number | null;
 }
 
 export interface BundleQualityRow {

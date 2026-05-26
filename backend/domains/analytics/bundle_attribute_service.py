@@ -1,37 +1,51 @@
 """
 Bundle Attribute Service
 
-AI-assisted extraction of technical attribute values (Groups H and I)
-from patent abstract and claims text, plus manual update helpers.
+AI-assisted extraction of technical attribute values for patent bundles.
+Covers the 20 AI-scoreable attributes from AI_Prompts_for_Attribute_Scoring.md,
+split between Group A (dedicated function) and all others (single extraction call).
 """
 from __future__ import annotations
 import json
 import logging
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Fields the LLM can provide and their validation rules
+# ---------------------------------------------------------------------------
+# Fields the LLM can score — exactly matching AI_Prompts_for_Attribute_Scoring.md
+# Excludes: H2, H3, H7, H8, H9, H10 (DB lookup / hallucination risk)
+#           I1 (targeted research / hallucination risk)
+#           B2 (requires SSO database verification)
+#           C3, H5, H6 (counting from database)
+#           E, F groups (database / lifecycle data)
+# ---------------------------------------------------------------------------
+
 _LLM_EXTRACTABLE: Dict[str, dict] = {
-    'h1_claim_strength':           {'type': 'int', 'min': 0, 'max': 3},
-    'h2_prior_art_exposure':       {'type': 'int', 'min': 0, 'max': 3},
-    'h3_prosecution_risk':         {'type': 'int', 'min': 0, 'max': 3},
-    'h4_divided_infringement_risk':{'type': 'bool'},
-    'h7_litigation_history':       {'type': 'choice', 'choices': ['None','Filed','Survived','Lost']},
-    'h8_chain_of_title':           {'type': 'choice', 'choices': ['Clean','Issues','Unknown']},
-    'h9_eou_availability':         {'type': 'choice', 'choices': ['None','Partial','Full']},
-    'h10_encumbrance_status':      {'type': 'choice', 'choices': ['None','FRAND','Exclusive License','Other']},
-    'i1_product_mapping_confidence':{'type': 'int', 'min': 0, 'max': 3},
-    'i2_implementation_maturity':  {'type': 'choice', 'choices': ['Concept','Prototype','Commercial','Ubiquitous']},
-    'i3_adjacent_market_reread':   {'type': 'int', 'min': 0, 'max': 3},
-    'i4_workaround_complexity':    {'type': 'int', 'min': 0, 'max': 3},
-    # Also try to fill unfilled A-G fields
-    'a3_stack_layer':              {'type': 'choice', 'choices': ['App','Middleware','Cloud','Hardware','OS','Protocol','']},
-    'b1_sep_potential':            {'type': 'int', 'min': 0, 'max': 3},
-    'c1_claim_type':               {'type': 'choice', 'choices': ['Method','Apparatus','CRM','System','Composition','']},
-    'c2_breadth':                  {'type': 'int', 'min': 0, 'max': 3},
-    'c4_design_around_difficulty': {'type': 'int', 'min': 0, 'max': 3},
+    # Group B — Standards & Ecosystem (partial)
+    'b1_sep_potential':             {'type': 'int',    'min': 0, 'max': 3},
+    'b3_interface_role':            {'type': 'int',    'min': 0, 'max': 3},
+    # Group C — Claim & Scope
+    'c1_claim_type':                {'type': 'choice', 'choices': ['Method', 'Apparatus', 'CRM', 'System', 'Design', '']},
+    'c2_breadth':                   {'type': 'int',    'min': 0, 'max': 3},
+    'c4_design_around_difficulty':  {'type': 'int',    'min': 0, 'max': 3},
+    # Group D — Detectability
+    'd1_external_detectability':    {'type': 'int',    'min': 0, 'max': 3},
+    'd2_teardown_detectability':    {'type': 'int',    'min': 0, 'max': 3},
+    # Group G — Strategic & Thematic
+    'g1_convergence_theme':         {'type': 'str'},
+    'g2_generation_tag':            {'type': 'choice', 'choices': ['Legacy', 'Current', 'Next-gen', '']},
     'g3_cross_industry_applicability': {'type': 'int', 'min': 0, 'max': 3},
+    # Group H — Quality (AI-scoreable subset only)
+    'h1_claim_strength':            {'type': 'int',    'min': 0, 'max': 3},
+    'h4_divided_infringement_risk': {'type': 'int',    'min': 0, 'max': 3},
+    # Group I — Market Signals (AI-scoreable subset)
+    'i2_implementation_maturity':   {'type': 'choice', 'choices': ['Idea-only', 'Prototyped', 'Productized']},
+    'i3_adjacent_market_reread':    {'type': 'int',    'min': 0, 'max': 3},
+    'i4_workaround_complexity':     {'type': 'int',    'min': 0, 'max': 3},
+    # Group A — stack layer (bonus fill if not already classified)
+    'a3_stack_layer':               {'type': 'choice', 'choices': ['Hardware', 'Firmware', 'OS', 'Middleware', 'App', 'Cloud', 'UI', '']},
 }
 
 
@@ -40,11 +54,11 @@ def extract_bundle_attributes_via_llm(
     fields_to_extract: Optional[List[str]] = None,
 ) -> Dict:
     """
-    Use LLM to infer attribute scores from a patent's abstract and claims text.
+    Use LLM to infer attribute scores from a patent's structured inputs.
     Returns dict of {field_name: value} for successfully extracted fields.
-    Updates PatentBundleAttributes and marks ai_extracted_fields.
+    Updates PatentBundleAttributes, ai_extracted_fields, and ai_confidence_scores.
     """
-    from .models import PatentRecord, PatentBundleAttributes, LLMProviderConfig
+    from .models import PatentRecord, PatentBundleAttributes
 
     try:
         pr = PatentRecord.objects.get(id=patent_record_id)
@@ -54,27 +68,22 @@ def extract_bundle_attributes_via_llm(
     attrs_obj, _ = PatentBundleAttributes.objects.get_or_create(patent_record_id=patent_record_id)
 
     target_fields = fields_to_extract or list(_LLM_EXTRACTABLE.keys())
-    # Don't overwrite manually-set fields
     protected = set(attrs_obj.manually_set_fields or [])
     target_fields = [f for f in target_fields if f not in protected and f in _LLM_EXTRACTABLE]
 
     if not target_fields:
         return {}
 
-    # Build prompt
-    patent_text = _build_patent_text(pr)
-    prompt = _build_extraction_prompt(patent_text, target_fields)
+    inputs = _build_patent_inputs(pr)
+    prompt = _build_extraction_prompt(inputs, target_fields)
 
-    # Call LLM
     raw_response = _call_llm(prompt)
     if not raw_response:
         logger.warning('LLM returned no response for patent %s', patent_record_id)
         return {}
 
-    # Parse and validate
-    extracted = _parse_and_validate(raw_response, target_fields)
+    extracted, confidence_map = _parse_and_validate(raw_response, target_fields)
 
-    # Apply to model
     newly_extracted = []
     for field, value in extracted.items():
         setattr(attrs_obj, field, value)
@@ -85,6 +94,9 @@ def extract_bundle_attributes_via_llm(
         existing_ai = set(attrs_obj.ai_extracted_fields or [])
         attrs_obj.ai_extracted_fields = list(existing_ai | set(newly_extracted))
         attrs_obj.last_ai_extraction = timezone.now()
+        existing_conf = dict(attrs_obj.ai_confidence_scores or {})
+        existing_conf.update(confidence_map)
+        attrs_obj.ai_confidence_scores = existing_conf
         attrs_obj.save()
 
     return extracted
@@ -99,7 +111,6 @@ def update_attributes_manually(
     Returns the updated attribute dict.
     """
     from .models import PatentBundleAttributes
-    from django.utils import timezone
 
     attrs_obj, _ = PatentBundleAttributes.objects.get_or_create(patent_record_id=patent_record_id)
 
@@ -120,62 +131,254 @@ def update_attributes_manually(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internals
+# Patent input preparation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_patent_text(pr) -> str:
+def _build_patent_inputs(pr) -> dict:
+    """
+    Build a structured dict of named patent inputs for the LLM prompt.
+    Extracts structured fields rather than a single text blob.
+    """
     title = pr.title or 'Untitled'
-    abstract = pr.abstract or ''
-    claims = ''
-    if pr.claims:
-        if isinstance(pr.claims, list):
-            claims = '\n'.join(str(c) for c in pr.claims[:5])
-        else:
-            claims = str(pr.claims)[:1500]
-    return f"TITLE: {title}\n\nABSTRACT: {abstract[:1000]}\n\nCLAIMS (first 5):\n{claims[:1500]}"
+    abstract = (pr.abstract or '')[:1000]
 
+    # Parse claims into independent vs. dependent
+    ind_claim_1 = ''
+    ind_claim_others_parts = []
+    raw_claims = pr.claims or []
+    if isinstance(raw_claims, list):
+        ind_count = 0
+        for claim in raw_claims[:20]:
+            text = _claim_text(claim)
+            if not text:
+                continue
+            # Dependent claims reference another claim number
+            if re.search(r'\bclaim\s+\d', text, re.IGNORECASE):
+                continue  # skip dependent claims
+            ind_count += 1
+            if ind_count == 1:
+                ind_claim_1 = text[:800]
+            else:
+                ind_claim_others_parts.append(text[:400])
+    elif isinstance(raw_claims, str) and raw_claims.strip():
+        # Fallback: use first 800 chars
+        ind_claim_1 = raw_claims[:800]
 
-def _build_extraction_prompt(patent_text: str, target_fields: List[str]) -> str:
-    field_descriptions = {
-        'h1_claim_strength':           'How strong are the independent claims? (0=very weak, 1=weak, 2=moderate, 3=strong broad claims)',
-        'h2_prior_art_exposure':       'How much prior art risk exists? (0=none, 1=low, 2=moderate, 3=high risk)',
-        'h3_prosecution_risk':         'Prosecution history risk/estoppel (0=none, 1=low, 2=moderate, 3=high)',
-        'h4_divided_infringement_risk':'Does the claim require multiple parties to infringe? (true/false)',
-        'h7_litigation_history':       'Litigation/PTAB history: None, Filed, Survived, or Lost',
-        'h8_chain_of_title':           'Chain of title status: Clean, Issues, or Unknown',
-        'h9_eou_availability':         'Evidence-of-Use chart availability: None, Partial, or Full',
-        'h10_encumbrance_status':      'Licensing encumbrances: None, FRAND, Exclusive License, or Other',
-        'i1_product_mapping_confidence':'How confidently can claims be mapped to real products? (0-3)',
-        'i2_implementation_maturity':  'Technology implementation maturity: Concept, Prototype, Commercial, or Ubiquitous',
-        'i3_adjacent_market_reread':   'Can this patent read on adjacent industries? (0=no, 1=possibly, 2=likely, 3=clearly)',
-        'i4_workaround_complexity':    'How hard is it to design around this patent? (0=easy, 1=moderate, 2=hard, 3=very hard)',
-        'a3_stack_layer':              'Technology stack layer: App, Middleware, Cloud, Hardware, OS, Protocol, or empty string',
-        'b1_sep_potential':            'Standard-essential patent potential (0=none, 1=low, 2=moderate, 3=high)',
-        'c1_claim_type':               'Primary claim type: Method, Apparatus, CRM, System, Composition, or empty string',
-        'c2_breadth':                  'Claim breadth (0=very narrow, 1=narrow, 2=moderate, 3=pioneer/broad)',
-        'c4_design_around_difficulty': 'How hard to design around? (0=easy, 3=very hard)',
-        'g3_cross_industry_applicability':'Can this apply across multiple industries? (0=no, 3=broad applicability)',
+    ind_claim_others = ('\n'.join(ind_claim_others_parts))[:600] or 'none'
+
+    # Background / field of invention
+    background = ''
+    for attr in ('description', 'background', 'field_of_invention'):
+        val = getattr(pr, attr, None)
+        if val:
+            background = str(val)[:800]
+            break
+
+    # CPC codes
+    cpc_raw = getattr(pr, 'cpc_classification', '') or ''
+    cpc_parts = [c.strip() for c in str(cpc_raw).replace(';', ',').split(',') if c.strip()]
+    cpc_primary = cpc_parts[0] if cpc_parts else 'unknown'
+    cpc_others = ', '.join(cpc_parts[1:]) if len(cpc_parts) > 1 else 'unknown'
+
+    return {
+        'title': title,
+        'abstract': abstract,
+        'independent_claim_1': ind_claim_1 or 'not available',
+        'independent_claim_others': ind_claim_others,
+        'background_or_field': background or 'not available',
+        'cpc_primary': cpc_primary,
+        'cpc_others': cpc_others,
     }
 
-    fields_prompt = '\n'.join(
-        f'- "{f}": {field_descriptions.get(f, f)}'
+
+def _claim_text(claim) -> str:
+    """Extract plain text from a claim that may be a dict, string, or other format."""
+    if isinstance(claim, dict):
+        text = claim.get('text', '') or claim.get('claim_text', '') or ''
+    else:
+        text = str(claim)
+    # Strip HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Strip leading "N. " numbering
+    text = re.sub(r'^\s*\d+\.\s*', '', text.strip())
+    return text.strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt building
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DEFAULT_EXTRACTION_TEMPLATE = """\
+You are scoring a patent on {field_count} attributes. Read the structured inputs and return JSON.
+
+TITLE: {title}
+ABSTRACT: {abstract}
+INDEPENDENT_CLAIM_1: {independent_claim_1}
+INDEPENDENT_CLAIM_OTHERS: {independent_claim_others}
+BACKGROUND_OR_FIELD: {background_or_field}
+CPC_PRIMARY: {cpc_primary}
+CPC_OTHERS: {cpc_others}
+
+ATTRIBUTES TO SCORE:
+{fields_prompt}
+
+IMPORTANT RULES:
+- Return ONLY valid JSON — no prose around it.
+- Each field must be an object with three keys: "value", "confidence" (0-100), "justification" (one sentence).
+- If you cannot determine a value from the text, use 0, "", or the first valid choice as appropriate. Set confidence < 50.
+- Score conservatively. Confidence < 60 means flag for manual review.
+
+Return ONLY valid JSON. Example format:
+{{"h1_claim_strength": {{"value": 2, "confidence": 80, "justification": "Claim language is clear with minor structural ambiguity."}}, "d1_external_detectability": {{"value": 1, "confidence": 65, "justification": "Behavior requires external instrumentation to detect."}}}}"""
+
+
+_FIELD_DESCRIPTIONS = {
+    # Group B
+    'b1_sep_potential': (
+        'SEP (standard-essential patent) potential — integer 0-3.\n'
+        '  3: Claim language directly mirrors a normative spec section of a known standard (3GPP, IEEE 802.x, ITU, USB, Bluetooth).\n'
+        '  2: Claim reads on a specific clause of a known standard but the mapping is inferential.\n'
+        '  1: Standard-adjacent — claim involves a standardized area but essentiality is debatable.\n'
+        '  0: No standard tie evident.'
+    ),
+    'b3_interface_role': (
+        'Interface role — integer 0-3.\n'
+        '  3: Claim sits at a mandatory interface between two systems (wire protocol, connector pinout, RPC format, handshake).\n'
+        '  2: Claim covers a widely-used interoperability mechanism that is de-facto standard but not technically mandatory.\n'
+        '  1: Claim involves an interface but the interface is internal to one product.\n'
+        '  0: No interface dimension in the claim.'
+    ),
+    # Group C
+    'c1_claim_type': (
+        'Primary claim type — exactly one of: Apparatus, Method, System, CRM, Design.\n'
+        '  Apparatus: "an apparatus comprising..."\n'
+        '  Method: "a method comprising the steps of..."\n'
+        '  System: "a system for X comprising..."\n'
+        '  CRM: "a non-transitory computer-readable medium..."\n'
+        '  Design: design patents (D-numbered, drawings only)'
+    ),
+    'c2_breadth': (
+        'Claim breadth — integer 0-3.\n'
+        '  3 (pioneer/foundational): Few elements, abstract language, broad genus.\n'
+        '  2 (broad): Moderate element count, some structural narrowing.\n'
+        '  1 (narrow): Many specific constraints, named structural features.\n'
+        '  0 (very narrow/picture claim): Tied to one specific implementation.'
+    ),
+    'c4_design_around_difficulty': (
+        'Design-around difficulty — integer 0-3.\n'
+        '  3 (hard): Claim covers the natural/efficient approach; alternatives are commercially undesirable.\n'
+        '  2: Covers main routes but leaves specific alternatives.\n'
+        '  1: Claim is one of several obvious alternatives — modest redesign needed.\n'
+        '  0: Trivial workaround exists.'
+    ),
+    # Group D
+    'd1_external_detectability': (
+        'External detectability (no teardown) — integer 0-3.\n'
+        '  3: Visible in UI, marketed feature, public spec sheet, or measurable from outputs (e.g., protocol behavior on the wire).\n'
+        '  2: Detectable from network traffic capture or external instrumentation.\n'
+        '  1: Detectable only with significant external testing.\n'
+        '  0: Requires teardown or internal access.'
+    ),
+    'd2_teardown_detectability': (
+        'Teardown / reverse-engineering detectability — integer 0-3.\n'
+        '  3: Visible in standard teardown (circuit traces, chip die markings, mechanical components).\n'
+        '  2: Detectable with electrical probing or chip-level reverse engineering.\n'
+        '  1: Detectable only with deep RE (decapping, firmware dump).\n'
+        '  0: Process-internal — no teardown reveals it (e.g., a manufacturing process step).\n'
+        '  Default: apparatus/chip-layout claims usually 2-3; pure-software-method claims usually 0-1.'
+    ),
+    # Group G
+    'g1_convergence_theme': (
+        'Convergence theme — comma-separated tags from this fixed dictionary ONLY '
+        '(use ONLY tags from this list; if none fit, return ""):\n'
+        '"AI+healthcare", "Edge AI", "AR/VR", "AI+chip-design", "Robotics+CV", "Quantum", '
+        '"Sustainability+materials", "AI+industrial", "Web3", "Spatial computing", "AI+security", "AI+finance"\n'
+        'Up to 2 tags. Only tag if the patent clearly fits.'
+    ),
+    'g2_generation_tag': (
+        'Technology generation — exactly one of: Legacy, Current, Next-gen, or "" (empty).\n'
+        '  Legacy: tied to a superseded generation still in service (e.g., 4G LTE in 2026, USB 2.0).\n'
+        '  Current: tied to the dominant deployed generation (5G NR, USB 3.x, Wi-Fi 6).\n'
+        '  Next-gen: tied to the emerging or pre-deployment generation (6G, Wi-Fi 8, USB4 v2).\n'
+        '  "": for non-generation-tagged tech (materials, basic algorithms, mechanical systems).'
+    ),
+    'g3_cross_industry_applicability': (
+        'Cross-industry applicability — integer 0-3.\n'
+        '  Count plausible target industries from: Consumer Electronics, Automotive, Healthcare, '
+        'Industrial/Manufacturing, Telecom, Energy, Aerospace, FinTech, AgTech, Defense.\n'
+        '  3: 4+ industries; 2: 3 industries; 1: 2 industries; 0: single industry only.'
+    ),
+    # Group H
+    'h1_claim_strength': (
+        'Claim strength rating — integer 0-3.\n'
+        '  3: Clean, definite language; clear antecedent basis; structurally clean; dependent claims provide layered fallbacks.\n'
+        '  2: Minor ambiguity but enforceable. One term might invite claim construction dispute.\n'
+        '  1: Vague terms, weak antecedent basis, multiple ambiguous limitations.\n'
+        '  0: Ambiguous, indefinite, or internally inconsistent.\n'
+        '  Check specifically for: antecedent basis violations, relative terms without baselines, open-ended ranges.'
+    ),
+    'h4_divided_infringement_risk': (
+        'Divided infringement risk — integer 0-3.\n'
+        '  3: All claim steps performed by a single actor. Apparatus claims default to 3.\n'
+        '  2: Claim steps performed by a single actor with minor user interaction.\n'
+        '  1: Claim steps require two parties (e.g., client + server with no clear "single mastermind").\n'
+        '  0: Explicit multi-party performance with no joint enterprise — high enforcement risk.'
+    ),
+    # Group I
+    'i2_implementation_maturity': (
+        'Implementation maturity — exactly one of: "Idea-only", "Prototyped", "Productized".\n'
+        '  Idea-only: Specification describes a concept with no working example, no experimental data.\n'
+        '  Prototyped: Specification references a working prototype, lab demo, or research publication.\n'
+        '  Productized: Specification names a commercial product, or there is strong evidence one exists.'
+    ),
+    'i3_adjacent_market_reread': (
+        'Adjacent-market re-read — integer 0-3.\n'
+        '  3: Claim language is industry-agnostic AND clearly reads on 2+ adjacent industries.\n'
+        '  2: Re-read plausible in one adjacent industry with no claim contortion.\n'
+        '  1: Re-read possible but requires aggressive interpretation.\n'
+        '  0: Claim language ties it tightly to one industry.\n'
+        '  Horizontal technologies (sensing, networking, AI methods) typically score 2-3.'
+    ),
+    'i4_workaround_complexity': (
+        'Workaround complexity — integer 0-3 (engineering effort for a non-infringing alternative).\n'
+        '  3: Deep redesign — claim covers the natural/efficient approach; alternatives are expensive or technically inferior.\n'
+        '  2: Significant redesign — alternatives exist but are commercially undesirable.\n'
+        '  1: Minor redesign — straightforward alternative available.\n'
+        '  0: Trivial workaround — designers can easily substitute.\n'
+        '  Note: I4 differs from C4. C4 is about claim language; I4 is about commercial impact.'
+    ),
+    # Group A (bonus)
+    'a3_stack_layer': (
+        'Stack layer where the novelty lives — exactly one of: Hardware, Firmware, OS, Middleware, App, Cloud, UI, or "" if not applicable.\n'
+        '  Hardware: physical device/circuit/material; Firmware: low-level embedded code; OS: kernel/driver;\n'
+        '  Middleware: protocol stacks/libraries; App: end-user application logic; Cloud: server-side service; UI: visual interface.'
+    ),
+}
+
+
+def _build_extraction_prompt(inputs: dict, target_fields: List[str]) -> str:
+    fields_prompt = '\n\n'.join(
+        f'"{f}":\n{_FIELD_DESCRIPTIONS.get(f, f)}'
         for f in target_fields
     )
 
-    return f"""You are a patent analyst. Analyze the following patent and score it on the listed attributes.
+    try:
+        from .models import AnalysisPromptTemplate
+        tpl = AnalysisPromptTemplate.get_active('bundle_attribute_extraction')
+        template_text = tpl.prompt_text if tpl else _DEFAULT_EXTRACTION_TEMPLATE
+    except Exception:
+        template_text = _DEFAULT_EXTRACTION_TEMPLATE
 
-PATENT:
-{patent_text}
+    return template_text.format(
+        **inputs,
+        fields_prompt=fields_prompt,
+        field_count=len(target_fields),
+    )
 
-TASK: Return a JSON object with ONLY the following fields scored based on the patent text.
-Use the descriptions as guidance. If you cannot determine a value from the text, use 0 or "" or "None" as appropriate.
 
-FIELDS TO SCORE:
-{fields_prompt}
-
-Return ONLY valid JSON, no explanation. Example format:
-{{"h1_claim_strength": 2, "h2_prior_art_exposure": 1, "h7_litigation_history": "None", ...}}"""
-
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM calls
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _call_llm(prompt: str) -> Optional[str]:
     try:
@@ -201,7 +404,7 @@ def _call_anthropic(api_key: str, prompt: str) -> Optional[str]:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model='claude-sonnet-4-20250514',
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{'role': 'user', 'content': prompt}],
         )
         return response.content[0].text
@@ -216,7 +419,7 @@ def _call_openai(api_key: str, prompt: str) -> Optional[str]:
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model='gpt-4o',
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{'role': 'user', 'content': prompt}],
         )
         return response.choices[0].message.content
@@ -225,37 +428,64 @@ def _call_openai(api_key: str, prompt: str) -> Optional[str]:
         return None
 
 
-def _parse_and_validate(raw: str, target_fields: List[str]) -> dict:
-    """Extract JSON from LLM response and validate each field."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Parsing & validation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_and_validate(raw: str, target_fields: List[str]) -> Tuple[dict, dict]:
+    """
+    Extract JSON from LLM response and validate each field.
+
+    Handles two response shapes:
+    - Nested: {"field": {"value": X, "confidence": 80, "justification": "..."}}
+    - Flat:   {"field": X}  (backward compat)
+
+    Returns (validated_values, confidence_map).
+    confidence_map: {"field": {"confidence": int, "justification": str}}
+    """
     raw = raw.strip()
-    # Strip markdown code fences if present
     if raw.startswith('```'):
         lines = raw.split('\n')
-        raw = '\n'.join(lines[1:-1] if lines[-1] == '```' else lines[1:])
+        raw = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        # Try to find JSON object within text
-        import re
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if not match:
-            return {}
+            return {}, {}
         try:
             data = json.loads(match.group())
         except json.JSONDecodeError:
-            return {}
+            return {}, {}
 
     validated = {}
+    confidence_map = {}
+
     for field in target_fields:
         if field not in data:
             continue
+        raw_val = data[field]
         spec = _LLM_EXTRACTABLE.get(field, {})
-        value = data[field]
-        clean = _validate_value(value, spec)
+
+        # Handle nested format
+        if isinstance(raw_val, dict) and 'value' in raw_val:
+            score_val = raw_val['value']
+            conf = raw_val.get('confidence')
+            just = raw_val.get('justification', '')
+            if isinstance(conf, (int, float)) and 0 <= conf <= 100:
+                confidence_map[field] = {
+                    'confidence': int(conf),
+                    'justification': str(just)[:300],
+                }
+        else:
+            score_val = raw_val
+
+        clean = _validate_value(score_val, spec)
         if clean is not None:
             validated[field] = clean
-    return validated
+
+    return validated, confidence_map
 
 
 def _validate_value(value, spec: dict):
@@ -276,17 +506,22 @@ def _validate_value(value, spec: dict):
         choices = spec.get('choices', [])
         if value in choices:
             return value
-        # Case-insensitive fallback
         for c in choices:
             if c.lower() == str(value).lower():
                 return c
         return choices[0] if choices else ''
+    elif kind == 'str':
+        return str(value)[:200] if value else ''
     return value
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Group A — Technology Classification (dedicated function, unchanged logic)
+# ─────────────────────────────────────────────────────────────────────────────
+
 _GROUP_A_FIELDS = ['a1_primary_domain', 'a2_tech_subcategory', 'a3_stack_layer', 'a4_subsystem', 'a5_use_case']
 
-_A3_CHOICES = ['App', 'Middleware', 'Cloud', 'Hardware', 'OS', 'Protocol', '']
+_A3_CHOICES = ['Hardware', 'Firmware', 'OS', 'Middleware', 'App', 'Cloud', 'UI', '']
 
 
 def classify_group_a_via_llm(
@@ -298,7 +533,7 @@ def classify_group_a_via_llm(
     Skips if all A fields are already filled unless force=True.
     Returns dict of {field_name: value} for updated fields.
     """
-    from .models import PatentRecord, PatentBundleAttributes, LLMProviderConfig, GlobalTechnologyArea
+    from .models import PatentRecord, PatentBundleAttributes, GlobalTechnologyArea
     from django.utils import timezone
 
     try:
@@ -316,7 +551,6 @@ def classify_group_a_via_llm(
         if already_filled:
             return {}
 
-    # Build taxonomy reference
     taxonomy = list(
         GlobalTechnologyArea.objects.values('name', 'ipc_class', 'cpc_class', 'category')
     )
@@ -328,37 +562,51 @@ def classify_group_a_via_llm(
     else:
         taxonomy_lines = '(no taxonomy defined — use your best judgment)'
 
-    patent_text = _build_patent_text(pr)
+    inputs = _build_patent_inputs(pr)
     ipc_codes = getattr(pr, 'ipc_classification', '') or ''
-    cpc_codes = getattr(pr, 'cpc_classification', '') or ''
 
-    prompt = f"""You are a patent technology analyst. Classify the following patent using the provided taxonomy.
+    _default_group_a_template = """\
+You are a patent technology analyst. Classify the following patent using the provided taxonomy.
 
 PATENT:
-{patent_text}
+TITLE: {title}
+ABSTRACT: {abstract}
+INDEPENDENT_CLAIM_1: {independent_claim_1}
 
 IPC Codes: {ipc_codes}
-CPC Codes: {cpc_codes}
+CPC Codes: {cpc_primary}
 
-TAXONOMY (choose a1_primary_domain and a2_tech_subcategory from these names exactly):
+TAXONOMY (choose a1_primary_domain from these names exactly):
 {taxonomy_lines}
 
 TASK: Return a JSON object with these 5 fields:
 - "a1_primary_domain": The primary technology domain name — must exactly match a name from the taxonomy list above
-- "a2_tech_subcategory": A specific subcategory within that domain (2-4 words, can be free-form if taxonomy does not cover it)
-- "a3_stack_layer": One of: App, Middleware, Cloud, Hardware, OS, Protocol, or "" if not applicable
+- "a2_tech_subcategory": A specific subcategory within that domain (2-4 words, can be free-form)
+- "a3_stack_layer": One of: Hardware, Firmware, OS, Middleware, App, Cloud, UI, or "" if not applicable
 - "a4_subsystem": The specific subsystem or component this patent targets (2-5 words, free-form)
-- "a5_use_case": The primary use case or application (5-10 words, free-form)
+- "a5_use_case": The primary use case as a customer-facing problem (5-10 words, free-form)
 
 Return ONLY valid JSON, no explanation:
 {{"a1_primary_domain": "...", "a2_tech_subcategory": "...", "a3_stack_layer": "...", "a4_subsystem": "...", "a5_use_case": "..."}}"""
+
+    try:
+        from .models import AnalysisPromptTemplate
+        tpl = AnalysisPromptTemplate.get_active('group_a_classification')
+        template_text = tpl.prompt_text if tpl else _default_group_a_template
+    except Exception:
+        template_text = _default_group_a_template
+
+    prompt = template_text.format(
+        **inputs,
+        ipc_codes=ipc_codes,
+        taxonomy_lines=taxonomy_lines,
+    )
 
     raw_response = _call_llm(prompt)
     if not raw_response:
         logger.warning('LLM returned no response for Group A classification of patent %s', patent_record_id)
         return {}
 
-    # Parse and validate
     try:
         start = raw_response.find('{')
         end = raw_response.rfind('}') + 1
@@ -367,13 +615,11 @@ Return ONLY valid JSON, no explanation:
         logger.warning('Could not parse LLM Group A response for patent %s', patent_record_id)
         return {}
 
-    # Validate a3_stack_layer choice
     if 'a3_stack_layer' in extracted:
         v = extracted['a3_stack_layer']
         if v not in _A3_CHOICES:
             extracted['a3_stack_layer'] = ''
 
-    # Only write fields we got back
     protected = set(attrs_obj.manually_set_fields or [])
     newly_extracted = []
     for field in _GROUP_A_FIELDS:
@@ -390,18 +636,21 @@ Return ONLY valid JSON, no explanation:
     return {f: extracted[f] for f in newly_extracted if f in extracted}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _all_attribute_field_names() -> List[str]:
     return [
-        'a1_primary_domain','a2_tech_subcategory','a3_stack_layer','a4_subsystem','a5_use_case',
-        'b1_sep_potential','b2_standard_tagged','b3_interface_role',
-        'c1_claim_type','c2_breadth','c3_claim_count','c4_design_around_difficulty',
-        'd1_external_detectability','d2_teardown_detectability','d3_reads_on_products',
-        'e1_family_size','e2_prosecution_status','e3_continuation','e4_remaining_term_years','e5_maintenance_status',
-        'f1_jurisdictions','f2_trilateral','f3_major_market_score',
-        'g1_convergence_theme','g2_generation_tag','g3_cross_industry_applicability',
-        'h1_claim_strength','h2_prior_art_exposure','h3_prosecution_risk','h4_divided_infringement_risk',
-        'h5_forward_citations','h6_backward_citations','h7_litigation_history',
-        'h8_chain_of_title','h9_eou_availability','h10_encumbrance_status',
-        'i1_product_mapping_confidence','i2_implementation_maturity',
-        'i3_adjacent_market_reread','i4_workaround_complexity',
+        'a1_primary_domain', 'a2_tech_subcategory', 'a3_stack_layer', 'a4_subsystem', 'a5_use_case',
+        'b1_sep_potential', 'b2_standard_tagged', 'b3_interface_role',
+        'c1_claim_type', 'c2_breadth', 'c3_claim_count', 'c4_design_around_difficulty',
+        'd1_external_detectability', 'd2_teardown_detectability', 'd3_reads_on_products',
+        'e1_family_size', 'e2_prosecution_status', 'e3_continuation', 'e4_remaining_term_years', 'e5_maintenance_status',
+        'f1_jurisdictions', 'f2_trilateral', 'f3_major_market_score',
+        'g1_convergence_theme', 'g2_generation_tag', 'g3_cross_industry_applicability',
+        'h1_claim_strength', 'h2_prior_art_exposure', 'h3_prosecution_risk', 'h4_divided_infringement_risk',
+        'h5_forward_citations', 'h6_backward_citations', 'h7_litigation_history', 'h8_chain_of_title',
+        'h9_eou_availability', 'h10_encumbrance_status',
+        'i1_product_mapping_confidence', 'i2_implementation_maturity', 'i3_adjacent_market_reread', 'i4_workaround_complexity',
     ]

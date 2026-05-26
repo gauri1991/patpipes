@@ -38,6 +38,8 @@ import { useAuth } from '@/domains/accounts/hooks/useAuth';
 import { PermissionMatrix } from './PermissionMatrix';
 import { DataConfigurationPanel } from './DataConfigurationPanel';
 import { PatentAPIPanel } from './PatentAPIPanel';
+import { PromptManagementPanel } from './PromptManagementPanel';
+import { LLMKeysPanel } from './LLMKeysPanel';
 
 export function AdminPanel() {
   const router = useRouter();
@@ -147,11 +149,13 @@ export function AdminPanel() {
 
       {/* Admin Sections */}
       <Tabs defaultValue="overview" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-8">
+        <TabsList className="grid w-full grid-cols-10">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="data-config">Data Config</TabsTrigger>
           <TabsTrigger value="patent-apis">Patent APIs</TabsTrigger>
+          <TabsTrigger value="llm-keys">LLM Keys</TabsTrigger>
+          <TabsTrigger value="ai-prompts">AI Prompts</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
@@ -265,6 +269,40 @@ export function AdminPanel() {
             </CardHeader>
             <CardContent>
               <PatentAPIPanel />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="llm-keys">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <Key className="h-5 w-5 text-amber-600" />
+                <CardTitle>LLM Provider Keys</CardTitle>
+              </div>
+              <CardDescription>
+                Configure API keys for Anthropic, OpenAI, Google, and other LLM providers used by the AI analysis engine
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LLMKeysPanel />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ai-prompts">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <FileText className="h-5 w-5 text-purple-600" />
+                <CardTitle>AI Prompt Templates</CardTitle>
+              </div>
+              <CardDescription>
+                Manage versioned prompt templates used by the patent analysis engine — edit scoring prompts, classification prompts, and more without redeploying
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PromptManagementPanel />
             </CardContent>
           </Card>
         </TabsContent>

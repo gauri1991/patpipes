@@ -2554,6 +2554,16 @@ class AnalysisPromptTemplate(models.Model):
         ('background_analysis', 'Background & Problem Analysis'),
         ('means_plus_function', 'Means-Plus-Function Detection'),
         ('vulnerabilities', 'Prosecution Vulnerability Assessment'),
+        # Bundle attribute scoring prompts (used by bundle_attribute_service.py)
+        ('bundle_attribute_extraction', 'Bundle Attribute Extraction (Groups H & I)'),
+        ('group_a_classification', 'Technology Classification (Group A)'),
+        # MD-aligned grouped prompts (B2-B7 from AI_Prompts_for_Attribute_Scoring.md)
+        ('group_b_standards',      'Standards & Ecosystem (B1-B3)'),
+        ('group_c_claim_analysis', 'Claim Analysis (C1-C2-C4)'),
+        ('group_d_detectability',  'Detectability (D1-D2)'),
+        ('group_g_themes',         'Themes & Generation (G1-G2-G3)'),
+        ('group_h_quality',        'Claim Quality (H1-H4)'),
+        ('group_i_market',         'Market Signals (I2-I3-I4)'),
     ]
 
     CATEGORY_CHOICES = [
@@ -2774,6 +2784,8 @@ class PatentBundleAttributes(models.Model):
     ai_extracted_fields = models.JSONField(default=list)
     manually_set_fields = models.JSONField(default=list)
     last_ai_extraction = models.DateTimeField(null=True, blank=True)
+    ai_confidence_scores = models.JSONField(default=dict, blank=True)
+    # Format: {"field_name": {"confidence": 75, "justification": "one sentence"}, ...}
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -6,7 +6,7 @@ Provides comprehensive CRUD operations with granular permission checks
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Count, Q, Avg, F
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, serializers as drf_serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import BasePermission
@@ -15,13 +15,207 @@ from collections import defaultdict
 
 from .models import (
     ColumnMappingRule, DatasetColumnMapping, DynamicPatentField,
-    PatentDataset, AnalyticsProject
+    PatentDataset, AnalyticsProject,
+    AnalysisPromptTemplate, LLMProviderConfig,
 )
 from .serializers import (
-    ColumnMappingRuleSerializer, DatasetColumnMappingSerializer, 
+    ColumnMappingRuleSerializer, DatasetColumnMappingSerializer,
     DynamicPatentFieldSerializer
 )
 from .dynamic_migration_service import dynamic_migration_service
+
+
+# ---------------------------------------------------------------------------
+# Simple permission: staff or manager/admin role
+# ---------------------------------------------------------------------------
+
+class IsStaffOrManager(BasePermission):
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return request.user.is_staff or getattr(request.user, 'role', '') in ('admin', 'supervisor')
+
+
+# ---------------------------------------------------------------------------
+# Inline serializers for prompt templates & LLM provider configs
+# ---------------------------------------------------------------------------
+
+class AnalysisPromptTemplateAdminSerializer(drf_serializers.ModelSerializer):
+    section_label = drf_serializers.SerializerMethodField()
+    category_label = drf_serializers.SerializerMethodField()
+    created_by = drf_serializers.SerializerMethodField()
+
+    class Meta:
+        model = AnalysisPromptTemplate
+        fields = [
+            'id', 'section', 'section_label', 'category', 'category_label',
+            'version', 'prompt_text', 'description', 'is_active',
+            'created_at', 'updated_at', 'created_by',
+        ]
+        read_only_fields = ['id', 'section', 'section_label', 'category', 'category_label', 'version', 'created_at', 'updated_at', 'created_by']
+
+    def get_section_label(self, obj):
+        return obj.get_section_display()
+
+    def get_category_label(self, obj):
+        return obj.get_category_display()
+
+    def get_created_by(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None
+
+
+class LLMProviderConfigAdminSerializer(drf_serializers.ModelSerializer):
+    masked_key = drf_serializers.ReadOnlyField()
+    api_key = drf_serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = LLMProviderConfig
+        fields = [
+            'id', 'provider', 'display_name', 'masked_key', 'api_key',
+            'api_base_url', 'is_active', 'test_status', 'test_error',
+            'last_tested_at', 'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'masked_key', 'test_status', 'test_error', 'last_tested_at', 'created_at', 'updated_at']
+
+
+# ---------------------------------------------------------------------------
+# Prompt Template admin viewset
+# ---------------------------------------------------------------------------
+
+class AnalysisPromptTemplateAdminViewSet(viewsets.ModelViewSet):
+    """Admin CRUD for versioned AI prompt templates."""
+    queryset = AnalysisPromptTemplate.objects.all()
+    serializer_class = AnalysisPromptTemplateAdminSerializer
+    permission_classes = [IsStaffOrManager]
+    pagination_class = None
+
+    def perform_create(self, serializer):
+        section = serializer.validated_data.get('section')
+        category = serializer.validated_data.get('category', 'general')
+        latest = (
+            AnalysisPromptTemplate.objects
+            .filter(section=section, category=category)
+            .order_by('-version')
+            .first()
+        )
+        next_version = (latest.version + 1) if latest else 1
+        serializer.save(created_by=self.request.user, version=next_version)
+
+    @action(detail=False, methods=['get'])
+    def sections(self, request):
+        return Response([
+            {'value': val, 'label': label}
+            for val, label in AnalysisPromptTemplate.SECTION_CHOICES
+        ])
+
+    @action(detail=False, methods=['get'])
+    def categories(self, request):
+        return Response([
+            {'value': val, 'label': label}
+            for val, label in AnalysisPromptTemplate.CATEGORY_CHOICES
+        ])
+
+    @action(detail=False, methods=['get'])
+    def history(self, request):
+        section = request.query_params.get('section')
+        category = request.query_params.get('category', 'general')
+        if not section:
+            return Response({'error': 'section is required'}, status=400)
+        qs = AnalysisPromptTemplate.objects.filter(
+            section=section, category=category
+        ).order_by('-version')
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+
+# ---------------------------------------------------------------------------
+# LLM Provider Config admin viewset
+# ---------------------------------------------------------------------------
+
+class LLMProviderConfigAdminViewSet(viewsets.ViewSet):
+    """Admin CRUD for LLM provider API keys. lookup field is provider slug."""
+    permission_classes = [IsStaffOrManager]
+    pagination_class = None
+
+    def list(self, request):
+        configs = LLMProviderConfig.objects.all().order_by('provider')
+        serializer = LLMProviderConfigAdminSerializer(configs, many=True)
+        return Response(serializer.data)
+
+    def create(self, request):
+        provider = request.data.get('provider')
+        api_key = request.data.get('api_key', '')
+        display_name = request.data.get('display_name', provider)
+        if not provider or not api_key:
+            return Response({'error': 'provider and api_key are required'}, status=400)
+        if LLMProviderConfig.objects.filter(provider=provider).exists():
+            return Response({'error': f'Provider {provider} already configured'}, status=400)
+        config = LLMProviderConfig.objects.create(
+            provider=provider,
+            display_name=display_name,
+            api_key=api_key,
+            api_base_url=request.data.get('api_base_url', ''),
+            notes=request.data.get('notes', ''),
+            is_active=request.data.get('is_active', True),
+            updated_by=request.user,
+        )
+        return Response(LLMProviderConfigAdminSerializer(config).data, status=201)
+
+    def update(self, request, pk=None):
+        config = get_object_or_404(LLMProviderConfig, provider=pk)
+        new_key = request.data.get('api_key', '')
+        if new_key:
+            config.api_key = new_key
+            config.test_status = 'never'
+            config.test_error = ''
+        config.api_base_url = request.data.get('api_base_url', config.api_base_url)
+        config.notes = request.data.get('notes', config.notes)
+        if 'is_active' in request.data:
+            config.is_active = request.data['is_active']
+        config.updated_by = request.user
+        config.save()
+        return Response(LLMProviderConfigAdminSerializer(config).data)
+
+    def destroy(self, request, pk=None):
+        config = get_object_or_404(LLMProviderConfig, provider=pk)
+        config.delete()
+        return Response(status=204)
+
+    @action(detail=True, methods=['post'], url_path='test_connection')
+    def test_connection(self, request, pk=None):
+        config = get_object_or_404(LLMProviderConfig, provider=pk)
+        try:
+            if config.provider == 'anthropic':
+                import anthropic
+                client = anthropic.Anthropic(api_key=config.api_key)
+                client.messages.create(
+                    model='claude-haiku-4-5-20251001',
+                    max_tokens=5,
+                    messages=[{'role': 'user', 'content': 'hi'}],
+                )
+            elif config.provider == 'openai':
+                import openai
+                client = openai.OpenAI(api_key=config.api_key)
+                client.chat.completions.create(
+                    model='gpt-4o-mini',
+                    max_tokens=5,
+                    messages=[{'role': 'user', 'content': 'hi'}],
+                )
+            else:
+                return Response({'success': False, 'message': f'Test not implemented for {config.provider}'}, status=400)
+            config.test_status = 'passed'
+            config.test_error = ''
+            config.last_tested_at = timezone.now()
+            config.save(update_fields=['test_status', 'test_error', 'last_tested_at'])
+            return Response({'success': True, 'message': 'Connection successful'})
+        except Exception as exc:
+            config.test_status = 'failed'
+            config.test_error = str(exc)[:500]
+            config.last_tested_at = timezone.now()
+            config.save(update_fields=['test_status', 'test_error', 'last_tested_at'])
+            return Response({'success': False, 'message': str(exc)[:200]}, status=200)
 
 
 class DataConfigurationPermission(BasePermission):
