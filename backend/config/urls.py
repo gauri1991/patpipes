@@ -45,6 +45,12 @@ api_v1_patterns = [
 
     # Web Search domain
     path('web-search/', include('domains.web_search.urls', namespace='web_search')),
+
+    # FCC Data domain
+    path('fcc/', include('domains.fcc_data.urls', namespace='fcc_data')),
+
+    # Document Download domain
+    path('doc-download/', include('domains.doc_download.urls', namespace='doc_download')),
 ]
 
 urlpatterns = [

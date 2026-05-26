@@ -55,6 +55,8 @@ DOMAIN_APPS = [
     'domains.collaboration',  # NEW: Real-time collaboration features
     'domains.help',  # Help & documentation hub
     'domains.web_search',  # Web search
+    'domains.fcc_data',  # FCC data
+    'domains.doc_download',  # Document download
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + DOMAIN_APPS
