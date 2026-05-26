@@ -1,0 +1,11 @@
+"""
+Web Search App Configuration
+"""
+
+from django.apps import AppConfig
+
+
+class WebSearchConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'domains.web_search'
+    verbose_name = 'Web Search'

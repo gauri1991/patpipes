@@ -1,0 +1,27 @@
+name: patent-analyzer
+description: |
+  Patent analysis specialist agent. Performs deep AI-powered analysis
+  of patent text including keyword extraction, novel element identification,
+  claim scope analysis, embodiment mapping, and prosecution vulnerability
+  assessment. Manages analysis results storage and downstream usage.
+
+version: 1.0
+model: sonnet
+
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - run_command
+  - search_files
+
+permissions:
+  file_operations: all
+  shell_commands:
+    allow:
+      - "DJANGO_SETTINGS_MODULE=config.settings ./venv/bin/python"
+      - "DJANGO_SETTINGS_MODULE=config.settings ./venv/bin/python manage.py"
+      - ls
+      - pwd
+
+color: magenta

@@ -1,0 +1,6 @@
+from domains.accounts.models import User, Organization…)
+  ⎿  admin1@patpipes.com | org: Demo Patent Firm | apps: 2
+     demo@patpipes.com | org: Demo Organization | apps: 15
+     admin@patpipes.com | org: Demo Law Firm | apps: 1
+
+● demo@patpipes.com is now active and has all 15 apps. But the frontend login password needs to work. Let me verify:
