@@ -1,20 +1,4 @@
 services:
-  db:
-    image: postgres:16-alpine
-    restart: always
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-patent_analytics_db}
-      POSTGRES_USER: ${POSTGRES_USER:-patent_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-patent_secure_pass_2024}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-patent_user} -d ${POSTGRES_DB:-patent_analytics_db}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
-
   redis:
     image: redis:7-alpine
     restart: always
@@ -36,12 +20,11 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       DEBUG: "False"
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-147.93.96.76,localhost}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-patent_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-patent_analytics_db}
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-patent_analytics_db}
-      DB_USER: ${POSTGRES_USER:-patent_user}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-postgres}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
@@ -50,8 +33,6 @@ services:
       - media_files:/app/media
       - static_files:/app/staticfiles
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     ports:
@@ -66,19 +47,17 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY}
       DEBUG: "False"
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-patent_analytics_db}
-      DB_USER: ${POSTGRES_USER:-patent_user}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-postgres}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     volumes:
       - media_files:/app/media
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     command: celery -A config worker --loglevel=info --concurrency=2
@@ -99,7 +78,6 @@ services:
       - "3000:3000"
 
 volumes:
-  postgres_data:
   redis_data:
   media_files:
   static_files:
