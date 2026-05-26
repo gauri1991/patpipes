@@ -5,7 +5,7 @@ import { useRouter, useParams } from 'next/navigation';
 import {
   Package2, ChevronDown, ChevronRight, Sparkles, Download, FileSpreadsheet,
   FileJson, FileText, Save, Search, Filter, RefreshCw, Check, X,
-  AlertCircle, Clock, Zap, BarChart2, Shield, Star, TrendingUp,
+  AlertCircle, CheckCircle2, Clock, Zap, BarChart2, Shield, Star, TrendingUp,
   CircleDot, Layers, Globe, Activity, Edit2, Trash2, Plus, Eye,
   ChevronUp, Info, ArrowRight, Loader2, Clipboard, Target, MessageSquare,
   BookOpen, Link2, UploadCloud, ArrowLeft,
@@ -37,6 +37,10 @@ import {
   SalesPackageCreateData,
   SalesPackageArchetype,
   SalesPackagePattern,
+  SalesPackageMetaTags,
+  LintResult,
+  QualityGatesResult,
+  TierValidationResult,
   MCLEntry,
   ListingTierReport,
 } from '@/services/analyticsApi';
@@ -388,9 +392,19 @@ export default function SalesPackageProjectDetail() {
   const [generatedTeaser, setGeneratedTeaser] = useState('');
   const [generatedListing, setGeneratedListing] = useState('');
   const [tierReport, setTierReport] = useState<ListingTierReport | null>(null);
-  const [vpSubTab, setVpSubTab] = useState<'teaser' | 'listing'>('teaser');
+  const [vpSubTab, setVpSubTab] = useState<'teaser' | 'listing' | 'analysis' | 'deck' | 'cim'>('teaser');
   const [suggestedPattern, setSuggestedPattern] = useState<SalesPackagePattern | ''>('');
   const [vpCopied, setVpCopied] = useState(false);
+  const [suggestedArchetype, setSuggestedArchetype] = useState<SalesPackageArchetype | ''>('');
+  const [archetypeReason, setArchetypeReason] = useState('');
+  const [metaTags, setMetaTags] = useState<SalesPackageMetaTags | null>(null);
+  const [lintResults, setLintResults] = useState<LintResult[] | null>(null);
+  const [qualityGates, setQualityGates] = useState<QualityGatesResult | null>(null);
+  const [tierValidation, setTierValidation] = useState<TierValidationResult | null>(null);
+  const [generatedDeck, setGeneratedDeck] = useState('');
+  const [generatedCIM, setGeneratedCIM] = useState('');
+  const [generatingDeck, setGeneratingDeck] = useState(false);
+  const [generatingCIM, setGeneratingCIM] = useState(false);
 
   // Global
   const [activeTab, setActiveTab] = useState('attributes');
@@ -555,6 +569,14 @@ export default function SalesPackageProjectDetail() {
     setGeneratedListing(pkg.generated_listing || '');
     setTierReport(pkg.listing_tier_report || null);
     setSuggestedPattern(pkg.listing_pattern || '');
+    setSuggestedArchetype(pkg.suggested_archetype || '');
+    setArchetypeReason(pkg.archetype_reason || '');
+    setMetaTags(pkg.meta_tags || null);
+    setLintResults(pkg.lint_results || null);
+    setQualityGates(pkg.quality_gates || null);
+    setTierValidation(pkg.tier_validation || null);
+    setGeneratedDeck(pkg.generated_deck || '');
+    setGeneratedCIM(pkg.generated_cim || '');
   };
 
   const newPackage = () => {
@@ -564,6 +586,9 @@ export default function SalesPackageProjectDetail() {
     setPkgPrimaryArchetype(''); setPkgSecondaryArchetype(''); setPkgListingPattern('');
     setMclEntries([]); setGeneratedTeaser(''); setGeneratedListing('');
     setTierReport(null); setSuggestedPattern(''); setVpPatternOverride('');
+    setSuggestedArchetype(''); setArchetypeReason(''); setMetaTags(null);
+    setLintResults(null); setQualityGates(null); setTierValidation(null);
+    setGeneratedDeck(''); setGeneratedCIM('');
   };
 
   // ── Auto-generate package from template ──────────────────────────────────
@@ -1837,8 +1862,13 @@ export default function SalesPackageProjectDetail() {
                               setGeneratedListing(res.data.listing);
                               setTierReport(res.data.tier_report);
                               setSuggestedPattern(res.data.suggested_pattern);
+                              setSuggestedArchetype(res.data.suggested_archetype || '');
+                              setArchetypeReason(res.data.archetype_reason || '');
+                              setMetaTags(res.data.meta_tags || null);
+                              setLintResults(res.data.lint_results || null);
+                              setQualityGates(res.data.quality_gates || null);
+                              setTierValidation(res.data.tier_validation || null);
                               setVpSubTab('teaser');
-                              // Update saved packages list
                               setSavedPackages(prev => prev.map(p =>
                                 p.id === loadedPkgId
                                   ? { ...p, generated_teaser: res.data!.teaser, generated_listing: res.data!.listing, listing_tier_report: res.data!.tier_report }
@@ -1861,6 +1891,62 @@ export default function SalesPackageProjectDetail() {
                       {!pkgPrimaryArchetype && (
                         <p className="text-xs text-neutral-400 text-center">Select a buyer archetype in Package Builder first.</p>
                       )}
+
+                      {/* Rung 3: Deck */}
+                      {generatedListing && (
+                        <Button
+                          onClick={async () => {
+                            if (!projectId || !loadedPkgId) return;
+                            setGeneratingDeck(true);
+                            try {
+                              const res = await analyticsApi.generateDeck(projectId, loadedPkgId);
+                              if (res.success && res.data) {
+                                setGeneratedDeck(res.data.deck);
+                                setVpSubTab('deck');
+                              }
+                            } finally {
+                              setGeneratingDeck(false);
+                            }
+                          }}
+                          disabled={generatingDeck}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          {generatingDeck ? (
+                            <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Generating Deck…</>
+                          ) : (
+                            <><FileText className="w-4 h-4 mr-2" /> Generate Offering Deck (Rung 3)</>
+                          )}
+                        </Button>
+                      )}
+
+                      {/* Rung 4: CIM */}
+                      {generatedDeck && (
+                        <Button
+                          onClick={async () => {
+                            if (!projectId || !loadedPkgId) return;
+                            setGeneratingCIM(true);
+                            try {
+                              const res = await analyticsApi.generateCIM(projectId, loadedPkgId);
+                              if (res.success && res.data) {
+                                setGeneratedCIM(res.data.cim);
+                                setVpSubTab('cim');
+                              }
+                            } finally {
+                              setGeneratingCIM(false);
+                            }
+                          }}
+                          disabled={generatingCIM}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          {generatingCIM ? (
+                            <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Generating CIM…</>
+                          ) : (
+                            <><BookOpen className="w-4 h-4 mr-2" /> Generate CIM Outline (Rung 4)</>
+                          )}
+                        </Button>
+                      )}
                     </div>
 
                     {/* ── Right panel: Output ── */}
@@ -1877,7 +1963,7 @@ export default function SalesPackageProjectDetail() {
                         <div className="space-y-3">
                           {/* Tier report */}
                           {tierReport && (
-                            <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-neutral-50 border border-neutral-200">
+                            <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-neutral-50 border border-neutral-200 flex-wrap">
                               <span className="text-xs text-neutral-500 font-medium">Signal tiers:</span>
                               {(['t1', 't2', 't3', 't4'] as const).map(t => (
                                 <span key={t} className={`text-xs font-mono px-2 py-0.5 rounded-full border ${
@@ -1889,6 +1975,16 @@ export default function SalesPackageProjectDetail() {
                                   {t.toUpperCase()} {tierReport[t]}
                                 </span>
                               ))}
+                              {tierValidation && (
+                                <span className={`text-xs px-2 py-0.5 rounded-full border ${tierValidation.valid ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                                  {tierValidation.valid ? '✓ Tier mix valid' : `${tierValidation.issues.length} tier issue${tierValidation.issues.length !== 1 ? 's' : ''}`}
+                                </span>
+                              )}
+                              {qualityGates && (
+                                <span className={`text-xs px-2 py-0.5 rounded-full border ${qualityGates.all_passed ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                  {qualityGates.passed_count}/{qualityGates.total} gates
+                                </span>
+                              )}
                               <TooltipProvider>
                                 <Tooltip>
                                   <TooltipTrigger><Info className="w-3.5 h-3.5 text-neutral-400" /></TooltipTrigger>
@@ -1900,37 +1996,45 @@ export default function SalesPackageProjectDetail() {
                             </div>
                           )}
 
-                          {/* Sub-tabs: Teaser / Value Proposition */}
-                          <div className="flex gap-1 border-b border-neutral-200">
-                            {(['teaser', 'listing'] as const).map(t => (
+                          {/* Sub-tabs */}
+                          <div className="flex gap-1 border-b border-neutral-200 overflow-x-auto">
+                            {([
+                              { key: 'teaser', label: 'Teaser' },
+                              { key: 'listing', label: 'Value Proposition' },
+                              { key: 'analysis', label: 'Analysis' },
+                              ...(generatedDeck ? [{ key: 'deck', label: 'Offering Deck' }] : []),
+                              ...(generatedCIM ? [{ key: 'cim', label: 'CIM Outline' }] : []),
+                            ] as { key: typeof vpSubTab; label: string }[]).map(t => (
                               <button
-                                key={t}
-                                onClick={() => setVpSubTab(t)}
-                                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                                  vpSubTab === t
+                                key={t.key}
+                                onClick={() => setVpSubTab(t.key)}
+                                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                                  vpSubTab === t.key
                                     ? 'border-neutral-900 text-neutral-900'
                                     : 'border-transparent text-neutral-500 hover:text-neutral-700'
                                 }`}
                               >
-                                {t === 'teaser' ? 'Teaser' : 'Value Proposition'}
+                                {t.label}
                               </button>
                             ))}
                           </div>
 
                           <div className="relative">
-                            {/* Copy button */}
-                            <button
-                              onClick={async () => {
-                                const text = vpSubTab === 'teaser' ? generatedTeaser : generatedListing;
-                                await navigator.clipboard.writeText(text);
-                                setVpCopied(true);
-                                setTimeout(() => setVpCopied(false), 2000);
-                              }}
-                              className="absolute top-2 right-2 flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-700 transition-colors px-2 py-1 rounded border border-neutral-200 bg-white"
-                            >
-                              {vpCopied ? <Check className="w-3 h-3 text-green-500" /> : <Clipboard className="w-3 h-3" />}
-                              {vpCopied ? 'Copied!' : 'Copy'}
-                            </button>
+                            {/* Copy button (teaser/listing/deck/cim) */}
+                            {['teaser', 'listing', 'deck', 'cim'].includes(vpSubTab) && (
+                              <button
+                                onClick={async () => {
+                                  const textMap = { teaser: generatedTeaser, listing: generatedListing, deck: generatedDeck, cim: generatedCIM, analysis: '' };
+                                  await navigator.clipboard.writeText(textMap[vpSubTab] || '');
+                                  setVpCopied(true);
+                                  setTimeout(() => setVpCopied(false), 2000);
+                                }}
+                                className="absolute top-2 right-2 z-10 flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-700 transition-colors px-2 py-1 rounded border border-neutral-200 bg-white"
+                              >
+                                {vpCopied ? <Check className="w-3 h-3 text-green-500" /> : <Clipboard className="w-3 h-3" />}
+                                {vpCopied ? 'Copied!' : 'Copy'}
+                              </button>
+                            )}
 
                             {vpSubTab === 'teaser' && (
                               <div className="p-4 rounded-lg border border-neutral-200 bg-neutral-50 min-h-24">
@@ -1946,6 +2050,138 @@ export default function SalesPackageProjectDetail() {
                                   if (line.startsWith('**') && line.endsWith('**')) return <p key={i} className="text-xs font-semibold text-neutral-700 mt-2">{line.replace(/\*\*/g, '')}</p>;
                                   if (line.startsWith('- ')) return <p key={i} className="text-sm text-neutral-700 pl-3 before:content-['•'] before:mr-2 before:text-neutral-400">{line.replace('- ', '')}</p>;
                                   if (line.startsWith('*') && line.endsWith('*')) return <p key={i} className="text-xs text-neutral-400 italic">{line.replace(/\*/g, '')}</p>;
+                                  if (line === '---') return <hr key={i} className="border-neutral-200 my-2" />;
+                                  if (line === '') return <br key={i} />;
+                                  return <p key={i} className="text-sm text-neutral-800 leading-relaxed">{line}</p>;
+                                })}
+                              </div>
+                            )}
+
+                            {vpSubTab === 'analysis' && (
+                              <div className="space-y-4">
+                                {/* Archetype suggestion */}
+                                {suggestedArchetype && (
+                                  <div className="p-3 rounded-lg border border-blue-100 bg-blue-50">
+                                    <p className="text-xs font-semibold text-blue-700 mb-1 flex items-center gap-1.5">
+                                      <Sparkles className="w-3.5 h-3.5" /> Auto-Suggested Archetype (§4.5)
+                                    </p>
+                                    <p className="text-sm font-mono font-bold text-blue-800">{suggestedArchetype}</p>
+                                    {archetypeReason && <p className="text-xs text-blue-600 mt-1">{archetypeReason}</p>}
+                                  </div>
+                                )}
+
+                                {/* Meta tags */}
+                                {metaTags && (
+                                  <div className="p-3 rounded-lg border border-neutral-200 bg-neutral-50">
+                                    <p className="text-xs font-semibold text-neutral-600 mb-2">Block 7 Meta Tags</p>
+                                    <div className="space-y-1.5">
+                                      {(['industries', 'technologies', 'transactions'] as const).map(group => (
+                                        metaTags[group].length > 0 && (
+                                          <div key={group} className="flex items-start gap-2">
+                                            <span className="text-xs text-neutral-400 capitalize w-24 shrink-0">{group}:</span>
+                                            <div className="flex flex-wrap gap-1">
+                                              {metaTags[group].map(tag => (
+                                                <span key={tag} className="text-xs bg-white border border-neutral-200 rounded px-1.5 py-0.5 text-neutral-700">{tag}</span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Tier coverage validation */}
+                                {tierValidation && (
+                                  <div className={`p-3 rounded-lg border ${tierValidation.valid ? 'border-green-100 bg-green-50' : 'border-amber-100 bg-amber-50'}`}>
+                                    <p className={`text-xs font-semibold mb-2 flex items-center gap-1.5 ${tierValidation.valid ? 'text-green-700' : 'text-amber-700'}`}>
+                                      {tierValidation.valid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                                      Tier Coverage (§5.5) — {tierValidation.valid ? 'Valid' : 'Issues Found'}
+                                    </p>
+                                    <div className="flex gap-3 mb-2">
+                                      {Object.entries(tierValidation.counts).map(([tier, count]) => (
+                                        <div key={tier} className="text-center">
+                                          <p className="text-sm font-bold text-neutral-800">{count}</p>
+                                          <p className="text-xs text-neutral-500">{tier.toUpperCase()}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    {tierValidation.issues.map((issue, i) => (
+                                      <p key={i} className="text-xs text-red-600 flex items-start gap-1"><X className="w-3 h-3 shrink-0 mt-0.5" />{issue}</p>
+                                    ))}
+                                    {tierValidation.warnings.map((w, i) => (
+                                      <p key={i} className="text-xs text-amber-600 flex items-start gap-1"><AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />{w}</p>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Quality gates */}
+                                {qualityGates && (
+                                  <div className="p-3 rounded-lg border border-neutral-200 bg-neutral-50">
+                                    <p className="text-xs font-semibold text-neutral-600 mb-2 flex items-center gap-1.5">
+                                      <Shield className="w-3.5 h-3.5" /> Quality Gates (§17) — {qualityGates.passed_count}/{qualityGates.total} passed
+                                    </p>
+                                    <div className="space-y-1.5">
+                                      {qualityGates.gates.map(gate => (
+                                        <div key={gate.gate} className={`flex items-start gap-2 px-2 py-1.5 rounded border text-xs ${gate.passed ? 'border-green-100 bg-green-50' : 'border-red-100 bg-red-50'}`}>
+                                          {gate.passed ? <Check className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" /> : <X className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />}
+                                          <div>
+                                            <span className="font-semibold text-neutral-700">{gate.label}</span>
+                                            {gate.reason && <span className="text-neutral-500 ml-1">— {gate.reason}</span>}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Lint results */}
+                                {lintResults && lintResults.length > 0 && (
+                                  <div className="p-3 rounded-lg border border-neutral-200 bg-neutral-50">
+                                    <p className="text-xs font-semibold text-neutral-600 mb-2 flex items-center gap-1.5">
+                                      <AlertCircle className="w-3.5 h-3.5" /> Failure-Mode Lint (§15) — {lintResults.length} finding{lintResults.length !== 1 ? 's' : ''}
+                                    </p>
+                                    <div className="space-y-1.5">
+                                      {lintResults.map((r, i) => (
+                                        <div key={i} className={`flex items-start gap-2 px-2 py-1.5 rounded border text-xs ${r.severity === 'error' ? 'border-red-100 bg-red-50' : r.severity === 'warning' ? 'border-amber-100 bg-amber-50' : 'border-blue-100 bg-blue-50'}`}>
+                                          <span className={`shrink-0 font-semibold uppercase tracking-wide ${r.severity === 'error' ? 'text-red-600' : r.severity === 'warning' ? 'text-amber-600' : 'text-blue-600'}`}>{r.severity[0]}</span>
+                                          <div>
+                                            <span className="font-mono text-neutral-500">{r.mode}</span>
+                                            <span className="text-neutral-700 ml-1">— {r.description}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {!suggestedArchetype && !metaTags && !tierValidation && !qualityGates && (!lintResults || lintResults.length === 0) && (
+                                  <p className="text-xs text-neutral-400 text-center py-4">Generate a value proposition to see analysis results.</p>
+                                )}
+                              </div>
+                            )}
+
+                            {vpSubTab === 'deck' && (
+                              <div className="p-4 rounded-lg border border-neutral-200 bg-neutral-50 min-h-48 prose prose-sm max-w-none">
+                                {generatedDeck.split('\n').map((line, i) => {
+                                  if (line.startsWith('# ')) return <h1 key={i} className="text-base font-bold text-neutral-900 mt-4 mb-1">{line.replace('# ', '')}</h1>;
+                                  if (line.startsWith('## ')) return <h2 key={i} className="text-sm font-bold text-neutral-900 mt-3 mb-1">{line.replace('## ', '')}</h2>;
+                                  if (line.startsWith('### ')) return <h3 key={i} className="text-xs font-semibold text-neutral-700 mt-2 mb-0.5">{line.replace('### ', '')}</h3>;
+                                  if (line.startsWith('- ')) return <p key={i} className="text-sm text-neutral-700 pl-3 before:content-['•'] before:mr-2 before:text-neutral-400">{line.replace('- ', '')}</p>;
+                                  if (line === '---') return <hr key={i} className="border-neutral-200 my-2" />;
+                                  if (line === '') return <br key={i} />;
+                                  return <p key={i} className="text-sm text-neutral-800 leading-relaxed">{line}</p>;
+                                })}
+                              </div>
+                            )}
+
+                            {vpSubTab === 'cim' && (
+                              <div className="p-4 rounded-lg border border-neutral-200 bg-neutral-50 min-h-48 prose prose-sm max-w-none">
+                                {generatedCIM.split('\n').map((line, i) => {
+                                  if (line.startsWith('# ')) return <h1 key={i} className="text-base font-bold text-neutral-900 mt-4 mb-1">{line.replace('# ', '')}</h1>;
+                                  if (line.startsWith('## ')) return <h2 key={i} className="text-sm font-bold text-neutral-900 mt-3 mb-1">{line.replace('## ', '')}</h2>;
+                                  if (line.startsWith('### ')) return <h3 key={i} className="text-xs font-semibold text-neutral-700 mt-2 mb-0.5">{line.replace('### ', '')}</h3>;
+                                  if (line.startsWith('- ')) return <p key={i} className="text-sm text-neutral-700 pl-3 before:content-['•'] before:mr-2 before:text-neutral-400">{line.replace('- ', '')}</p>;
                                   if (line === '---') return <hr key={i} className="border-neutral-200 my-2" />;
                                   if (line === '') return <br key={i} />;
                                   return <p key={i} className="text-sm text-neutral-800 leading-relaxed">{line}</p>;

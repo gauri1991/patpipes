@@ -553,12 +553,18 @@ class SalesPackageSerializer(serializers.ModelSerializer):
             'mcl_entries',
             'generated_teaser', 'generated_listing',
             'listing_tier_report', 'listing_generated_at',
+            'meta_tags', 'lint_results', 'quality_gates', 'tier_validation',
+            'suggested_archetype', 'archetype_reason',
+            'generated_deck', 'generated_cim',
             'bundle_count', 'created_by', 'created_by_name',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'bundle_count', 'created_by', 'created_at', 'updated_at',
             'generated_teaser', 'generated_listing', 'listing_tier_report', 'listing_generated_at',
+            'meta_tags', 'lint_results', 'quality_gates', 'tier_validation',
+            'suggested_archetype', 'archetype_reason',
+            'generated_deck', 'generated_cim',
         ]
 
     def get_created_by_name(self, obj):

@@ -1478,10 +1478,36 @@ class AnalyticsApiService extends ApiClient {
     tier_report: ListingTierReport;
     suggested_pattern: SalesPackagePattern;
     pattern_used: SalesPackagePattern;
+    meta_tags: SalesPackageMetaTags | null;
+    lint_results: LintResult[] | null;
+    quality_gates: QualityGatesResult | null;
+    tier_validation: TierValidationResult | null;
+    suggested_archetype: SalesPackageArchetype | '';
+    archetype_reason: string;
   }>> {
     return this.fetchWithAuth(
       `/analytics/api/projects/${projectId}/generate-listing/`,
       { method: 'POST', body: JSON.stringify(payload) }
+    );
+  }
+
+  async generateDeck(
+    projectId: string,
+    packageId: string
+  ): Promise<ApiResponse<{ deck: string }>> {
+    return this.fetchWithAuth(
+      `/analytics/api/projects/${projectId}/generate-deck/`,
+      { method: 'POST', body: JSON.stringify({ package_id: packageId }) }
+    );
+  }
+
+  async generateCIM(
+    projectId: string,
+    packageId: string
+  ): Promise<ApiResponse<{ cim: string }>> {
+    return this.fetchWithAuth(
+      `/analytics/api/projects/${projectId}/generate-cim/`,
+      { method: 'POST', body: JSON.stringify({ package_id: packageId }) }
     );
   }
 
@@ -1825,6 +1851,40 @@ export interface ListingTierReport {
   sentences: { text: string; tier: 'T1' | 'T2' | 'T3' | 'T4' }[];
 }
 
+export interface SalesPackageMetaTags {
+  industries: string[];
+  technologies: string[];
+  transactions: string[];
+}
+
+export interface LintResult {
+  mode: string;
+  severity: 'error' | 'warning' | 'info';
+  description: string;
+}
+
+export interface QualityGate {
+  gate: string;
+  label: string;
+  passed: boolean;
+  reason: string;
+}
+
+export interface QualityGatesResult {
+  gates: QualityGate[];
+  all_passed: boolean;
+  passed_count: number;
+  total: number;
+}
+
+export interface TierValidationResult {
+  valid: boolean;
+  issues: string[];
+  warnings: string[];
+  counts: Record<string, number>;
+  targets: Record<string, [number, number]>;
+}
+
 export interface SalesPackage {
   id: string;
   project: string;
@@ -1843,6 +1903,14 @@ export interface SalesPackage {
   generated_listing: string;
   listing_tier_report: ListingTierReport | null;
   listing_generated_at: string | null;
+  meta_tags: SalesPackageMetaTags | null;
+  lint_results: LintResult[] | null;
+  quality_gates: QualityGatesResult | null;
+  tier_validation: TierValidationResult | null;
+  suggested_archetype: SalesPackageArchetype | '';
+  archetype_reason: string;
+  generated_deck: string;
+  generated_cim: string;
   bundle_count: number;
   created_by: string | null;
   created_by_name: string | null;

@@ -1684,9 +1684,17 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
         pkg.listing_generated_at = timezone.now()
         if not pkg.listing_pattern:
             pkg.listing_pattern = result['pattern_used']
+        pkg.meta_tags = result.get('meta_tags')
+        pkg.lint_results = result.get('lint_results')
+        pkg.quality_gates = result.get('quality_gates')
+        pkg.tier_validation = result.get('tier_validation')
+        pkg.suggested_archetype = result.get('suggested_archetype', '')
+        pkg.archetype_reason = result.get('archetype_reason', '')
         pkg.save(update_fields=[
             'generated_teaser', 'generated_listing',
             'listing_tier_report', 'listing_generated_at', 'listing_pattern',
+            'meta_tags', 'lint_results', 'quality_gates', 'tier_validation',
+            'suggested_archetype', 'archetype_reason',
         ])
 
         return Response({
@@ -1695,5 +1703,119 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
             'tier_report': pkg.listing_tier_report,
             'suggested_pattern': result['suggested_pattern'],
             'pattern_used': result['pattern_used'],
+            'meta_tags': pkg.meta_tags,
+            'lint_results': pkg.lint_results,
+            'quality_gates': pkg.quality_gates,
+            'tier_validation': pkg.tier_validation,
+            'suggested_archetype': pkg.suggested_archetype,
+            'archetype_reason': pkg.archetype_reason,
         })
+
+    @action(detail=True, methods=['post'], url_path='generate-deck')
+    def generate_deck(self, request, pk=None):
+        """Generate Rung 3 non-confidential offering deck for a SalesPackage.
+
+        Body: { package_id: str }
+        """
+        from ..models import PatentBundleAttributes
+        from ..narrative_service import generate_deck as _generate_deck
+
+        project = self.get_object()
+        package_id = request.data.get('package_id')
+        if not package_id:
+            return Response({'error': 'package_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        pkg = get_object_or_404(SalesPackage, id=package_id, project=project)
+
+        analysis = (project.analysis_results or {}).get('bundle_analysis', {})
+        assignment_matrix = analysis.get('assignment_matrix', {})
+        matrix = assignment_matrix.get('matrix', [])
+        patent_ids_in_matrix = assignment_matrix.get('patent_ids', [])
+        bundle_codes_in_matrix = assignment_matrix.get('bundle_codes', [])
+
+        selected_patent_ids = set()
+        for code in (pkg.bundle_codes or []):
+            if code in bundle_codes_in_matrix:
+                col_idx = bundle_codes_in_matrix.index(code)
+                for row_idx, row in enumerate(matrix):
+                    if row[col_idx]:
+                        selected_patent_ids.add(patent_ids_in_matrix[row_idx])
+
+        attributes_qs = PatentBundleAttributes.objects.filter(
+            project=project,
+            patent_record_id__in=list(selected_patent_ids)[:20],
+        ).values() if selected_patent_ids else PatentBundleAttributes.objects.filter(
+            project=project
+        ).values()[:20]
+
+        patent_attributes = list(attributes_qs)
+        bundle_data = {
+            'assignments': assignment_matrix,
+            'scorecard': {row['bundle_code']: row for row in analysis.get('quality_scorecard', [])},
+            'composition': analysis.get('bundle_composition', {}),
+        }
+
+        try:
+            deck_md = _generate_deck(pkg, bundle_data, patent_attributes, pkg.generated_listing or '')
+        except Exception as e:
+            logger.exception('generate_deck failed')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        pkg.generated_deck = deck_md
+        pkg.save(update_fields=['generated_deck'])
+        return Response({'deck': deck_md})
+
+    @action(detail=True, methods=['post'], url_path='generate-cim')
+    def generate_cim(self, request, pk=None):
+        """Generate Rung 4 CIM outline for a SalesPackage.
+
+        Body: { package_id: str }
+        """
+        from ..models import PatentBundleAttributes
+        from ..narrative_service import generate_cim as _generate_cim
+
+        project = self.get_object()
+        package_id = request.data.get('package_id')
+        if not package_id:
+            return Response({'error': 'package_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        pkg = get_object_or_404(SalesPackage, id=package_id, project=project)
+
+        analysis = (project.analysis_results or {}).get('bundle_analysis', {})
+        assignment_matrix = analysis.get('assignment_matrix', {})
+        matrix = assignment_matrix.get('matrix', [])
+        patent_ids_in_matrix = assignment_matrix.get('patent_ids', [])
+        bundle_codes_in_matrix = assignment_matrix.get('bundle_codes', [])
+
+        selected_patent_ids = set()
+        for code in (pkg.bundle_codes or []):
+            if code in bundle_codes_in_matrix:
+                col_idx = bundle_codes_in_matrix.index(code)
+                for row_idx, row in enumerate(matrix):
+                    if row[col_idx]:
+                        selected_patent_ids.add(patent_ids_in_matrix[row_idx])
+
+        attributes_qs = PatentBundleAttributes.objects.filter(
+            project=project,
+            patent_record_id__in=list(selected_patent_ids)[:20],
+        ).values() if selected_patent_ids else PatentBundleAttributes.objects.filter(
+            project=project
+        ).values()[:20]
+
+        patent_attributes = list(attributes_qs)
+        bundle_data = {
+            'assignments': assignment_matrix,
+            'scorecard': {row['bundle_code']: row for row in analysis.get('quality_scorecard', [])},
+            'composition': analysis.get('bundle_composition', {}),
+        }
+
+        try:
+            cim_md = _generate_cim(pkg, bundle_data, patent_attributes)
+        except Exception as e:
+            logger.exception('generate_cim failed')
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        pkg.generated_cim = cim_md
+        pkg.save(update_fields=['generated_cim'])
+        return Response({'cim': cim_md})
 

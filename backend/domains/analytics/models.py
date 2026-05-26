@@ -3049,6 +3049,15 @@ class SalesPackage(models.Model):
     generated_listing = models.TextField(blank=True)
     listing_tier_report = models.JSONField(null=True, blank=True)
     listing_generated_at = models.DateTimeField(null=True, blank=True)
+    # Framework completion fields (v3)
+    meta_tags = models.JSONField(null=True, blank=True, help_text='Block 7 meta tags: industries, technologies, transactions')
+    lint_results = models.JSONField(null=True, blank=True, help_text='§15 failure-mode lint results')
+    quality_gates = models.JSONField(null=True, blank=True, help_text='§17 quality gate results')
+    tier_validation = models.JSONField(null=True, blank=True, help_text='§5.5 tier coverage validation')
+    suggested_archetype = models.CharField(max_length=10, blank=True, choices=ARCHETYPE_CHOICES, help_text='§4.5 auto-suggested archetype')
+    archetype_reason = models.TextField(blank=True, help_text='Reason for suggested archetype')
+    generated_deck = models.TextField(blank=True, help_text='Rung 3 non-confidential offering deck (markdown)')
+    generated_cim = models.TextField(blank=True, help_text='Rung 4 CIM outline (markdown)')
     created_by = models.ForeignKey(
         get_user_model(), on_delete=models.SET_NULL, null=True, blank=True
     )

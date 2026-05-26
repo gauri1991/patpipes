@@ -330,6 +330,634 @@ PATTERN_A_QUALIFYING_BUNDLES = {
 # Block 5 mode by pattern
 BLOCK5_MODE = {'A': 'prose', 'B': 'close_tag', 'C': 'omit', 'D': 'omit'}
 
+# Section 12 bundle-type narrative guide (pattern, archetype, buyer hook, block5 mode)
+BUNDLE_TYPE_GUIDE = {
+    'TECH_DOMAIN':      {'pattern': 'C', 'archetype': 'OC-DEF',  'buyer_hook': 'active in {domain}',               'block5': 'omit'},
+    'SEP':              {'pattern': 'A', 'archetype': 'NPE-LIC',  'buyer_hook': 'implementers of {standard}',        'block5': 'prose'},
+    'PRODUCT_ARCH':     {'pattern': 'A', 'archetype': 'OC-DEF',  'buyer_hook': 'building {product}',                'block5': 'prose'},
+    'DETECTABILITY':    {'pattern': 'A', 'archetype': 'NPE-LIT',  'buyer_hook': 'litigation-ready buyers',           'block5': 'prose'},
+    'FOUNDATIONAL':     {'pattern': 'A', 'archetype': 'OC-DEF',  'buyer_hook': 'established players',               'block5': 'prose'},
+    'DEFENSIVE':        {'pattern': 'A', 'archetype': 'OC-OFF',  'buyer_hook': 'facing assertion risk',              'block5': 'prose'},
+    'ANCHOR_HALO':      {'pattern': 'A', 'archetype': 'OC-DEF',  'buyer_hook': 'strategic acquirers',               'block5': 'prose'},
+    'PICKET_FENCE':     {'pattern': 'A', 'archetype': 'OC-DEF',  'buyer_hook': 'operators in the {domain} space',   'block5': 'prose'},
+    'CONTINUATION_LIVE':{'pattern': 'B', 'archetype': 'OC-EXP',  'buyer_hook': 'shaping claims to a product',       'block5': 'close_tag'},
+    'EOU_BACKED':       {'pattern': 'A', 'archetype': 'NPE-LIC',  'buyer_hook': 'monetization-ready buyers',         'block5': 'prose'},
+    'BATTLE_TESTED':    {'pattern': 'A', 'archetype': 'NPE-LIT',  'buyer_hook': 'litigation buyers needing certainty','block5': 'prose'},
+    'HIGH_CITATION':    {'pattern': 'A', 'archetype': 'DEF-AGG',  'buyer_hook': 'category-defining acquirers',       'block5': 'prose'},
+    'PRE_EXPIRY':       {'pattern': 'C', 'archetype': 'LIT-FIN',  'buyer_hook': 'litigation-finance buyers',         'block5': 'omit'},
+    'STRONG_CORE_TAIL': {'pattern': 'A', 'archetype': 'OC-DEF',  'buyer_hook': 'acquirers seeking portfolio depth',  'block5': 'prose'},
+}
+
+
+def suggest_archetype(bundle_codes: list, patent_attributes: list, scorecard: dict) -> tuple:
+    """Return (archetype, reason) using the §4.5 decision tree from the framework.
+
+    Priority rules (evaluated in order):
+      1. High D2 + H9 + H7=Survived → NPE-LIT or LIT-FIN
+      2. High D3 + named product mapping → OC-OFF or NPE-LIC
+      3. Broad A1/A2 + high G3 → OC-EXP
+      4. Clean H8/H10 + high H1 + long E4 → DEF-AGG
+      5. Integrated A4 subsystem + clean title → OC-DEF
+      6. Default → OC-DEF
+    """
+    if not patent_attributes:
+        # Fall back to bundle-type guide
+        for code in bundle_codes:
+            guide = BUNDLE_TYPE_GUIDE.get(code)
+            if guide:
+                return guide['archetype'], f'Derived from dominant bundle type {code} (§12 guide)'
+        return 'OC-DEF', 'Default archetype — no attributes available'
+
+    high_d2 = any(a.get('d2_teardown_detectability', 0) >= 2 for a in patent_attributes)
+    has_h9 = any(a.get('h9_eou_availability') in ('Yes', 'Full', 'Partial') for a in patent_attributes)
+    h7_survived = any(a.get('h7_litigation_history') == 'Survived' for a in patent_attributes)
+    high_d3 = any(a.get('d3_reads_on_products', 0) >= 2 for a in patent_attributes)
+    high_i1 = any(a.get('i1_product_mapping_confidence', 0) >= 2 for a in patent_attributes)
+    unique_domains = set(
+        a.get('a1_primary_domain', '') for a in patent_attributes if a.get('a1_primary_domain')
+    )
+    broad_domains = len(unique_domains) >= 2
+    high_g3 = any(a.get('g3_cross_industry_applicability', 0) >= 2 for a in patent_attributes)
+    clean_h8 = any(a.get('h8_chain_of_title') == 'Clean' for a in patent_attributes)
+    no_encumbrance = any(a.get('h10_encumbrance_status') == 'None' for a in patent_attributes)
+    high_h1 = any(a.get('h1_claim_strength', 0) >= 2 for a in patent_attributes)
+    long_e4 = any((a.get('e4_remaining_term_years') or 0) > 10 for a in patent_attributes)
+    has_a4 = any(a.get('a4_subsystem') for a in patent_attributes)
+
+    if high_d2 and has_h9 and h7_survived:
+        return 'NPE-LIT', 'High teardown detectability (D2≥2) + EoU availability (H9) + PTAB-survived (H7) — §4.5 rule 1'
+    if high_d3 and high_i1:
+        return 'OC-OFF', 'High reads-on score (D3≥2) + strong product mapping (I1≥2) — §4.5 rule 2'
+    if broad_domains and high_g3:
+        return 'OC-EXP', f'Broad domain coverage ({len(unique_domains)} domains) + cross-industry applicability (G3≥2) — §4.5 rule 3'
+    if clean_h8 and no_encumbrance and high_h1 and long_e4:
+        return 'DEF-AGG', 'Clean title (H8) + unencumbered (H10) + strong claims (H1≥2) + long term (E4>10y) — §4.5 rule 4'
+    if has_a4 and clean_h8:
+        return 'OC-DEF', 'Integrated subsystem coverage (A4) + clean chain of title (H8) — §4.5 rule 5'
+    return 'OC-DEF', 'Default archetype — no specific signals triggered (§4.5 fallback)'
+
+
+def generate_meta_tags(patent_attributes: list, transaction_type: str, bundle_codes: list) -> dict:
+    """Generate Block 7 meta tags per §10: Industries (1–5), Technologies (1–4), Transactions (1–2)."""
+    industries: set = set()
+    technologies: set = set()
+
+    for a in patent_attributes:
+        if a.get('a1_primary_domain'):
+            industries.add(a['a1_primary_domain'])
+            technologies.add(a['a1_primary_domain'])
+        if a.get('a2_tech_subcategory'):
+            industries.add(a['a2_tech_subcategory'])
+        if a.get('a3_stack_layer'):
+            technologies.add(a['a3_stack_layer'])
+        if a.get('a4_subsystem'):
+            technologies.add(a['a4_subsystem'])
+
+    # Bundle-code hints for industries when attributes are sparse
+    if not industries:
+        for code in bundle_codes:
+            guide = BUNDLE_TYPE_GUIDE.get(code)
+            if guide:
+                industries.add(code.replace('_', ' ').title())
+
+    tx_map = {
+        'sale': ['SALE'],
+        'license': ['LICENCE', 'SALE'],
+        'co_dev': ['CO-DEVELOPMENT'],
+        'cross': ['CROSS-LICENCE'],
+    }
+    transactions = tx_map.get(transaction_type, ['SALE'])
+
+    return {
+        'industries': sorted(industries)[:5],
+        'technologies': sorted(technologies)[:4],
+        'transactions': transactions,
+    }
+
+
+def validate_tier_coverage(tier_report: dict) -> dict:
+    """Validate tier coverage against §5.5 targets: 1–2 T1, 3–6 T2, 1–3 T3, 0–1 T4."""
+    if not tier_report:
+        return {'valid': False, 'issues': ['No tier report available'], 'warnings': [], 'counts': {}, 'targets': {}}
+
+    t1 = tier_report.get('t1', 0)
+    t2 = tier_report.get('t2', 0)
+    t3 = tier_report.get('t3', 0)
+    t4 = tier_report.get('t4', 0)
+    issues, warnings = [], []
+
+    if t1 < 1:
+        issues.append('No T1 verifiable facts — listing lacks substantiated claims')
+    elif t1 > 2:
+        warnings.append(f'T1 count ({t1}) above target 1–2 — consider trimming')
+
+    if t2 < 3:
+        issues.append(f'T2 count ({t2}) below target 3–6 — not enough scored attribute signals')
+    elif t2 > 6:
+        warnings.append(f'T2 count ({t2}) above target 3–6 — may feel data-heavy')
+
+    if t3 < 1:
+        issues.append('No T3 signals — listing lacks diligence-grade trust signals (add claim charts / validity-tested / clean title)')
+    elif t3 > 3:
+        warnings.append(f'T3 count ({t3}) above target 1–3 — may read as a diligence dump')
+
+    if t4 > 1:
+        issues.append(f'T4 count ({t4}) exceeds target 0–1 — multiple market claims read as marketing puffery')
+
+    return {
+        'valid': len(issues) == 0,
+        'issues': issues,
+        'warnings': warnings,
+        'counts': {'t1': t1, 't2': t2, 't3': t3, 't4': t4},
+        'targets': {'t1': '1–2', 't2': '3–6', 't3': '1–3', 't4': '0–1'},
+    }
+
+
+def lint_listing(listing_text: str, package, tier_report: dict, pattern: str) -> list:
+    """Check a listing against the §15 seventeen failure modes.
+
+    Returns a list of {mode, description, severity} dicts.
+    severity is 'error' (must fix) or 'warning' (should fix).
+    """
+    import re
+    issues = []
+    text_lower = (listing_text or '').lower()
+    archetype = package.primary_archetype or 'OC-DEF'
+    mcl = package.mcl_entries or []
+    t3 = (tier_report or {}).get('t3', 0)
+    t4 = (tier_report or {}).get('t4', 0)
+
+    # 1. Wrong pattern — full prose Block 5 on a single-asset narrow (Pattern D)
+    if pattern == 'D' and 'enables accelerated' in text_lower:
+        issues.append({'mode': 'wrong_pattern', 'severity': 'error',
+                       'description': 'Pattern D listing contains full prose Block 5 — reads as overreach for a single-asset narrow listing.'})
+
+    # 2. Wrong archetype register
+    if archetype == 'DEF-AGG' and any(p in text_lower for p in ['named competitor', 'counter-assertion', 'reads on identified products']):
+        issues.append({'mode': 'wrong_archetype', 'severity': 'error',
+                       'description': 'OC-OFF language detected on a DEF-AGG package — archetype register talks past the buyer.'})
+
+    # 3. Patent-by-patent summary
+    patent_refs = re.findall(r'\bUS\s*\d{7,8}\b', listing_text or '')
+    if len(patent_refs) >= 3:
+        issues.append({'mode': 'patent_by_patent', 'severity': 'warning',
+                       'description': f'{len(patent_refs)} individual patent numbers cited — a bundle should be a single proposition, not a per-patent inventory.'})
+
+    # 4. Vague buyer profile
+    vague = ['technology companies', 'tech companies', 'various companies', 'any company', 'many companies', 'broad range of']
+    if any(p in text_lower for p in vague):
+        issues.append({'mode': 'vague_buyer', 'severity': 'error',
+                       'description': 'Vague buyer profile detected — routes to nobody. Name specific buyer archetypes or sectors.'})
+
+    # 5. Claim-language dump
+    claim_terms = ['wherein', 'comprising the steps', 'said element', 'said device', 'at least one of the following', 'the method comprising']
+    if sum(1 for t in claim_terms if t in text_lower) >= 2:
+        issues.append({'mode': 'claim_language', 'severity': 'error',
+                       'description': 'Patent claim language detected — this reads as legal text, not marketing copy. Rephrase into buyer benefits.'})
+
+    # 6. Unsupported T4
+    t4_phrases = ['billion market', 'cagr', 'market growing', 'billion opportunity', 'trillion market', 'growing at']
+    if any(p in text_lower for p in t4_phrases) and not mcl:
+        issues.append({'mode': 'unsupported_t4', 'severity': 'error',
+                       'description': "Market-size claim present but no MCL entry supports it — buyer's analyst will flag as unsupported puffery."})
+
+    # 7. Adjective inflation
+    banned = ['revolutionary', 'breakthrough', 'innovative', 'cutting-edge', 'best-in-class',
+               'paradigm-shifting', 'game-changing', 'world-class', 'unprecedented', 'disruptive']
+    found = [w for w in banned if w in text_lower]
+    if found:
+        issues.append({'mode': 'adjective_inflation', 'severity': 'error',
+                       'description': f'Banned adjectives found: {", ".join(found)}. Remove — they burn buyer trust.'})
+
+    # 8. Tier mixing — T2 attribute adjacent to un-cited T4 market claim
+    if tier_report and t4 > 0 and tier_report.get('t2', 0) > 0:
+        sentences_list = tier_report.get('sentences', [])
+        for i, s in enumerate(sentences_list):
+            if s.get('tier') == 'T2':
+                for j in [i - 1, i + 1]:
+                    if 0 <= j < len(sentences_list) and sentences_list[j].get('tier') == 'T4':
+                        issues.append({'mode': 'tier_mixing', 'severity': 'warning',
+                                       'description': 'T2 scored attribute and T4 market claim appear in adjacent sentences — blurs patent facts vs market claims. Separate with a divider or reorder.'})
+                        break
+
+    # 9. Too long for pattern
+    word_count = len((listing_text or '').split())
+    limits = {'A': 350, 'B': 220, 'C': 200, 'D': 200}
+    if pattern in limits and word_count > limits[pattern]:
+        issues.append({'mode': 'too_long', 'severity': 'warning',
+                       'description': f'Pattern {pattern} listing is {word_count} words — target ≤{limits[pattern]}. Trim for buyer scan speed.'})
+
+    # 10. Missing timing hook when MCL has one
+    if mcl and t4 == 0:
+        issues.append({'mode': 'missing_timing_hook', 'severity': 'warning',
+                       'description': 'MCL entries exist but no market/timing hook (Block 4) present — missed an easy strategic anchor.'})
+
+    # 11. Forced timing hook without MCL
+    if not mcl and t4 > 0:
+        issues.append({'mode': 'forced_timing_hook', 'severity': 'error',
+                       'description': 'Market-context claim present without an MCL entry — weakens overall credibility.'})
+
+    # 12. Mixing transaction modes in prose
+    tx_words_found = sum(1 for w in ['for license,', 'for sale,', 'for strategic partnership', 'license, sale'] if w in text_lower)
+    if tx_words_found >= 2:
+        issues.append({'mode': 'transaction_mixing', 'severity': 'warning',
+                       'description': 'Multiple transaction modes mixed in body prose — use meta tags for flexibility; keep prose focused on one positioning.'})
+
+    # 13. Generic close-tag triplet
+    generic_markers = ['great for product, defense', 'licensing, defense, and revenue', 'product, defense, and revenue']
+    if any(m in text_lower for m in generic_markers):
+        issues.append({'mode': 'generic_triplet', 'severity': 'warning',
+                       'description': 'Generic buyer-value triplet detected — must name specific sectors or use cases, not generic categories like "product, defense, revenue".'})
+
+    # 14. Missing T3 signals
+    if t3 == 0:
+        issues.append({'mode': 'missing_t3', 'severity': 'error',
+                       'description': 'No T3 signals present — add at minimum one of: claim charts available, validity-tested, clean chain of title, or continuation optionality.'})
+
+    # 15. Buried T3 signals
+    buried_markers = ['among other features', 'it is also worth noting', 'additionally, claim charts', 'also available upon']
+    if t3 > 0 and any(m in text_lower for m in buried_markers):
+        issues.append({'mode': 'buried_t3', 'severity': 'warning',
+                       'description': 'T3 signal appears buried inside an addendum clause — T3 deserves a standalone sentence for maximum buyer impact.'})
+
+    return issues
+
+
+def validate_quality_gates(package, scorecard: dict, tier_report: dict, listing_text: str, pattern: str) -> dict:
+    """Run the §17 authoring workflow quality gates.
+
+    Returns {gates, all_passed, passed_count, total}.
+    """
+    gates = []
+
+    # Gate 1: Does the scorecard show STRONG or MODERATE?
+    strength_flags = [
+        (scorecard.get(code) or {}).get('strength_flag', 'WEAK')
+        for code in (package.bundle_codes or [])
+    ]
+    has_quality = any(f in ('STRONG', 'MODERATE') for f in strength_flags)
+    gates.append({
+        'id': 'gate_1', 'step': 1, 'name': 'Bundle Strength',
+        'passed': has_quality,
+        'message': 'At least one bundle rated STRONG or MODERATE' if has_quality
+                   else 'All bundles WEAK — reconsider whether this bundle should be marketed',
+    })
+
+    # Gate 5: Five-second test — opener conveys domain + count + buyer
+    opener_ok = bool(listing_text) and len(listing_text.split()) >= 60
+    gates.append({
+        'id': 'gate_5', 'step': 5, 'name': 'Five-Second Test',
+        'passed': opener_ok,
+        'message': 'Listing has sufficient opening content' if opener_ok
+                   else 'Listing too short — Block 1 must convey domain, asset count, and buyer type within 5 seconds of reading',
+    })
+
+    # Gate 11: Zero critical failure modes
+    lint_results = lint_listing(listing_text, package, tier_report, pattern)
+    errors = [r for r in lint_results if r.get('severity') == 'error']
+    gates.append({
+        'id': 'gate_11', 'step': 11, 'name': 'Failure-Mode Checklist',
+        'passed': len(errors) == 0,
+        'message': 'No critical failure modes' if len(errors) == 0
+                   else f'{len(errors)} critical failure mode(s) — must fix before listing',
+    })
+
+    # Gate 12: Tier discipline
+    tier_val = validate_tier_coverage(tier_report)
+    gates.append({
+        'id': 'gate_12', 'step': 12, 'name': 'Tier Discipline',
+        'passed': tier_val['valid'],
+        'message': 'Tier coverage within targets (1–2 T1, 3–6 T2, 1–3 T3, 0–1 T4)' if tier_val['valid']
+                   else '; '.join(tier_val.get('issues', ['Tier coverage out of range'])),
+    })
+
+    # Gate 14: Exemplar density proxy (word count + T2 signals)
+    wc = len((listing_text or '').split())
+    t2 = (tier_report or {}).get('t2', 0)
+    density_ok = wc >= 100 and t2 >= 2
+    gates.append({
+        'id': 'gate_14', 'step': 14, 'name': 'Exemplar Density',
+        'passed': density_ok,
+        'message': f'Listing meets density requirements ({wc} words, {t2} T2 signals)' if density_ok
+                   else f'Under-substantiated — {wc} words, {t2} T2 signals (target: ≥100 words, ≥2 T2)',
+    })
+
+    return {
+        'gates': gates,
+        'all_passed': all(g['passed'] for g in gates),
+        'passed_count': sum(1 for g in gates if g['passed']),
+        'total': len(gates),
+    }
+
+
+def generate_deck(package, bundle_data: dict, patent_attributes: list, listing_text: str) -> str:
+    """Generate a Rung 3 non-confidential offering deck (7-slide markdown outline)."""
+    archetype = package.primary_archetype or 'OC-DEF'
+    arch_info = ARCHETYPE_DATA.get(archetype, ARCHETYPE_DATA['OC-DEF'])
+    domain = _get_domain_from_attributes(patent_attributes)
+    asset_count = len(patent_attributes) or len(package.bundle_codes or []) * 5
+    scorecard = bundle_data.get('scorecard', {})
+    best_signal = _get_best_t3_signal(patent_attributes, scorecard, package.bundle_codes or [])
+
+    # Try LLM
+    try:
+        from .models import LLMProviderConfig
+        from django.core.signing import Signer
+        config = LLMProviderConfig.objects.filter(is_active=True).first()
+        if config:
+            api_key = Signer().unsign(config.api_key) if config.api_key else ''
+            prompt = (
+                f"Generate a 7-slide non-confidential patent offering deck in markdown for:\n"
+                f"Package: {package.name}\nDomain: {domain}\nArchetype: {archetype} — {arch_info['name']}\n"
+                f"Transaction: {package.get_transaction_type_display()}\nAssets: {asset_count}\n"
+                f"Bundles: {', '.join(package.bundle_codes or [])}\n\n"
+                f"Listing excerpt:\n{(listing_text or '')[:600]}\n\n"
+                "Slides: 1-Cover, 2-Executive Summary (3 bullets), 3-Feature Highlights (one per bullet from listing), "
+                "4-Buyer Fit (3 archetypes), 5-Package Summary (counts/term/jurisdictions), "
+                "6-Supporting Materials (claim charts/wrappers/title), 7-Next Steps.\n"
+                "Each slide: title + 3–5 bullets + one speaker note. Active voice. No unsupported claims."
+            )
+            raw = None
+            if config.provider == 'anthropic':
+                raw = _call_anthropic(api_key, prompt)
+            elif config.provider == 'openai':
+                raw = _call_openai(api_key, prompt)
+            if raw:
+                return raw
+    except Exception as e:
+        logger.warning('LLM deck generation failed: %s', e)
+
+    # Template fallback
+    bullets = _build_vp_bullets(patent_attributes, archetype)
+    avg_term = (sum((a.get('e4_remaining_term_years') or 0) for a in patent_attributes) / len(patent_attributes)) if patent_attributes else 0
+    trilateral = any(a.get('f2_trilateral') for a in patent_attributes)
+    has_eou = any(a.get('h9_eou_availability') in ('Yes', 'Full', 'Partial') for a in patent_attributes)
+    clean_title = any(a.get('h8_chain_of_title') == 'Clean' for a in patent_attributes)
+    secondary_arch_info = ARCHETYPE_DATA.get(package.secondary_archetype or 'OC-EXP', ARCHETYPE_DATA['OC-EXP'])
+
+    return f"""# {package.name} — Offering Deck
+*Rung 3 — Non-Confidential | {package.get_transaction_type_display()}*
+
+---
+
+## Slide 1 — Cover
+**{package.name}**
+- Transaction: {package.get_transaction_type_display()} on private placement basis
+- Domain: {domain or "Core Technology"}
+- Further details available under NDA
+
+*Speaker note: Set the stage — exclusive, structured process, NDA-gated diligence.*
+
+---
+
+## Slide 2 — Executive Summary
+**{asset_count} asset{"s" if asset_count != 1 else ""} — {domain or "Core Technology"}**
+- Positioned for {arch_info.get("description", "qualified buyers")}
+- {best_signal or "Strong technical merit across selected bundles"}
+- Available for {package.get_transaction_type_display().lower()} — full diligence package under NDA
+
+*Speaker note: Three points — what it is, who it's for, what's available.*
+
+---
+
+## Slide 3 — Feature Highlights
+**Technical Strengths**
+{"".join(f"- {b}{chr(10)}" for b in bullets)}
+*Speaker note: Each bullet maps to a patent attribute — expand with claim detail under NDA.*
+
+---
+
+## Slide 4 — Buyer Fit
+**Strategic fit for:**
+- **{arch_info.get("name")}** — {arch_info.get("description")}
+- **{secondary_arch_info.get("name")}** — {secondary_arch_info.get("description")}
+- **Defensive aggregators** — keeping assets out of NPE hands; clean title and broad applicability
+
+*Speaker note: Match named companies to archetypes in the NDA-gated version.*
+
+---
+
+## Slide 5 — Package Summary
+- Bundle types: {", ".join(package.bundle_codes or ["N/A"])}
+- Total assets: {asset_count}
+- Average remaining term: {"~" + str(round(avg_term, 1)) + " years" if avg_term else "pending"}
+- Jurisdictions: {"US, EU, Asia (trilateral coverage)" if trilateral else "US; additional jurisdictions available"}
+
+*Speaker note: Source all figures from PatentBundleAttributes before presenting.*
+
+---
+
+## Slide 6 — Supporting Materials
+**Available under NDA:**
+- Claim charts: {"Yes" if has_eou else "Available upon request"}
+- File wrappers: Yes
+- Chain of title: {"Clean — confirmed" if clean_title else "Available for review"}
+- Prosecution history: Available
+
+*Speaker note: Only commit to what legal has confirmed. Do not over-promise.*
+
+---
+
+## Slide 7 — Process & Next Steps
+1. Execute NDA
+2. Receive full diligence package
+3. Submit indications of interest
+4. Bid deadline: [TBD — insert date]
+5. Contact: [Broker name / email]
+
+*Speaker note: Keep process crisp — complexity signals weak seller confidence.*
+"""
+
+
+def generate_cim(package, bundle_data: dict, patent_attributes: list) -> str:
+    """Generate a Rung 4 Confidential Information Memorandum (CIM) outline.
+
+    Based on §3 Rung 4 structure: 10 sections, 20–40 pages.
+    Generated as structured markdown — broker fills in diligence detail.
+    """
+    archetype = package.primary_archetype or 'OC-DEF'
+    arch_info = ARCHETYPE_DATA.get(archetype, ARCHETYPE_DATA['OC-DEF'])
+    domain = _get_domain_from_attributes(patent_attributes)
+    asset_count = len(patent_attributes) or len(package.bundle_codes or []) * 5
+    scorecard = bundle_data.get('scorecard', {})
+    mcl = package.mcl_entries or []
+
+    # Try LLM for executive summary section (most value-added)
+    exec_summary = ''
+    try:
+        from .models import LLMProviderConfig
+        from django.core.signing import Signer
+        config = LLMProviderConfig.objects.filter(is_active=True).first()
+        if config:
+            api_key = Signer().unsign(config.api_key) if config.api_key else ''
+            prompt = (
+                f"Write a 1-page (250-350 word) executive summary for a patent CIM.\n"
+                f"Package: {package.name}\nDomain: {domain}\nArchetype: {archetype}\n"
+                f"Transaction: {package.get_transaction_type_display()}\nAssets: {asset_count}\n"
+                f"Listing: {package.generated_listing[:800] if package.generated_listing else 'N/A'}\n\n"
+                "Write in banker-formal register. Source every claim to an attribute or market fact. "
+                "No unsupported adjectives. Structure: What / Why this portfolio / Who should acquire it / Process."
+            )
+            raw = None
+            if config.provider == 'anthropic':
+                raw = _call_anthropic(api_key, prompt)
+            elif config.provider == 'openai':
+                raw = _call_openai(api_key, prompt)
+            if raw:
+                exec_summary = raw
+    except Exception as e:
+        logger.warning('LLM CIM exec summary failed: %s', e)
+
+    # Derive attribute summaries
+    h_attrs = {
+        'avg_h1': (sum((a.get('h1_claim_strength') or 0) for a in patent_attributes) / len(patent_attributes)) if patent_attributes else 0,
+        'avg_h2': (sum((a.get('h2_prior_art_exposure') or 0) for a in patent_attributes) / len(patent_attributes)) if patent_attributes else 0,
+        'eou_pct': round(100 * sum(1 for a in patent_attributes if a.get('h9_eou_availability') in ('Yes', 'Full', 'Partial')) / max(len(patent_attributes), 1)),
+        'survived': sum(1 for a in patent_attributes if a.get('h7_litigation_history') == 'Survived'),
+        'clean_title': sum(1 for a in patent_attributes if a.get('h8_chain_of_title') == 'Clean'),
+        'unencumbered': sum(1 for a in patent_attributes if a.get('h10_encumbrance_status') == 'None'),
+    }
+    avg_term = (sum((a.get('e4_remaining_term_years') or 0) for a in patent_attributes) / len(patent_attributes)) if patent_attributes else 0
+    avg_d1 = (sum((a.get('d1_external_detectability') or 0) for a in patent_attributes) / len(patent_attributes)) if patent_attributes else 0
+    avg_i1 = (sum((a.get('i1_product_mapping_confidence') or 0) for a in patent_attributes) / len(patent_attributes)) if patent_attributes else 0
+    trilateral = any(a.get('f2_trilateral') for a in patent_attributes)
+    jurisdictions = set()
+    for a in patent_attributes:
+        jlist = a.get('f1_jurisdictions') or []
+        if isinstance(jlist, list):
+            jurisdictions.update(jlist)
+    cont_live = sum(1 for a in patent_attributes if a.get('e3_continuation') or a.get('e3_live_continuation') == 'Yes')
+
+    exec_block = exec_summary if exec_summary else (
+        f"This memorandum presents {asset_count} patent asset{'s' if asset_count != 1 else ''} "
+        f"covering {domain or 'core technology'} for {package.get_transaction_type_display().lower()} "
+        f"on a private, structured basis. The portfolio is positioned for {arch_info.get('description', 'qualified buyers')}. "
+        f"{arch_info.get('deal_killer_pre_empt', 'Technical merit and enforceability have been verified').capitalize()}. "
+        f"All diligence materials referenced herein are available under the executed NDA."
+    )
+
+    market_block = ''
+    if mcl:
+        market_block = '\n'.join(f"- {e.get('statement', '')} [{e.get('source', '')}]" for e in mcl[:3])
+    else:
+        market_block = '*No market context entries — add MCL entries to populate this section.*'
+
+    return f"""# {package.name}
+## Confidential Information Memorandum
+*Rung 4 — Confidential | Released under NDA | {package.get_transaction_type_display()}*
+
+---
+
+## 1. Executive Summary *(1 page)*
+
+{exec_block}
+
+---
+
+## 2. Asset List *(1–3 pages)*
+
+| # | Asset | Status | Family Size | Remaining Term |
+|---|-------|--------|-------------|---------------|
+{"".join(f"| {i+1} | {a.get('patent_number') or a.get('patent_id') or f'Asset {i+1}'} | {a.get('e2_prosecution_status') or 'Granted'} | {a.get('e1_family_size') or '—'} | {str(round(a.get('e4_remaining_term_years') or 0, 1)) + 'y' if a.get('e4_remaining_term_years') else '—'} |\n" for i, a in enumerate(patent_attributes[:20]))}
+*Full bibliography with priority dates and IPC codes available in Appendix A.*
+
+---
+
+## 3. Technical Overview *(3–5 pages)*
+
+**Primary Domain:** {domain or '[Complete from A1 attributes]'}
+**Bundle Types:** {', '.join(package.bundle_codes or [])}
+**Claim Coverage:**
+- Breadth: avg H1 = {round(h_attrs['avg_h1'], 2)} / 3.0
+- Scope: {', '.join(set(a.get('a4_subsystem') or '' for a in patent_attributes if a.get('a4_subsystem'))[:4]) or '[derive from A4]'}
+- Use cases: {', '.join(set(a.get('a5_use_case') or '' for a in patent_attributes if a.get('a5_use_case'))[:4]) or '[derive from A5]'}
+
+*[Expand with claim-level analysis and diagrams under NDA]*
+
+---
+
+## 4. Claim Landscape *(2–4 pages)*
+
+- Independent claim types: {', '.join(set(a.get('c1_claim_type') or '' for a in patent_attributes if a.get('c1_claim_type'))[:4]) or '[derive from C1]'}
+- Claim breadth distribution: avg C2 = {round(sum((a.get('c2_claim_breadth') or 0) for a in patent_attributes) / max(len(patent_attributes), 1), 2)} / 3.0
+- Design-around difficulty: avg C4 = {round(sum((a.get('c4_design_around_difficulty') or 0) for a in patent_attributes) / max(len(patent_attributes), 1), 2)} / 3.0
+
+*[Provide claim charts for top assets under NDA]*
+
+---
+
+## 5. Quality & Vulnerability Assessment *(2–4 pages)*
+
+| Metric | Value |
+|--------|-------|
+| Avg claim strength (H1) | {round(h_attrs['avg_h1'], 2)} / 3.0 |
+| Avg prior art exposure (H2) | {round(h_attrs['avg_h2'], 2)} / 3.0 |
+| Validity-tested (PTAB survived) | {h_attrs['survived']} of {len(patent_attributes)} assets |
+| Clean chain of title (H8) | {h_attrs['clean_title']} of {len(patent_attributes)} assets |
+| Unencumbered (H10) | {h_attrs['unencumbered']} of {len(patent_attributes)} assets |
+| EoU availability (H9) | {h_attrs['eou_pct']}% of assets |
+
+---
+
+## 6. Detectability & Evidence-of-Use *(2–4 pages)*
+
+| Metric | Score |
+|--------|-------|
+| External detectability (D1) | {round(avg_d1, 2)} / 3.0 |
+| Teardown detectability (D2) | avg {round(sum((a.get('d2_teardown_detectability') or 0) for a in patent_attributes) / max(len(patent_attributes), 1), 2)} / 3.0 |
+| Product mapping confidence (I1) | {round(avg_i1, 2)} / 3.0 |
+| EoU charts available | {"Yes — available under NDA" if h_attrs['eou_pct'] > 0 else "Not available"} |
+
+*[List named products and D3 reads-on evidence under NDA]*
+
+---
+
+## 7. Geographic Coverage *(1 page)*
+
+- Trilateral coverage (US + EU + Asia): {"Yes" if trilateral else "No"}
+- Jurisdictions with active grants: {', '.join(sorted(jurisdictions)[:10]) if jurisdictions else '[derive from F1 attributes]'}
+- Major market score: avg {round(sum((a.get('f3_major_market_score') or 0) for a in patent_attributes) / max(len(patent_attributes), 1), 2)} / 3.0
+
+---
+
+## 8. Lifecycle & Continuation Optionality *(1–2 pages)*
+
+- Average remaining term: {round(avg_term, 1)} years
+- Live continuation applications: {cont_live} of {len(patent_attributes)} assets
+- Maintenance status: {', '.join(set(a.get('e5_maintenance_status') or '' for a in patent_attributes if a.get('e5_maintenance_status'))[:3]) or '[derive from E5]'}
+
+*[List open continuations and prosecution strategy under NDA]*
+
+---
+
+## 9. Market Context & Buyer Fit *(2–4 pages)*
+
+**Primary Buyer Archetype:** {arch_info.get('name')} — {arch_info.get('description')}
+**Deal-Killer Pre-empt:** {arch_info.get('deal_killer_pre_empt', 'Verified technical merit')}
+
+**Market Context (MCL):**
+{market_block}
+
+**Secondary Archetype:** {ARCHETYPE_DATA.get(package.secondary_archetype or 'OC-EXP', {}).get('name') or 'N/A'}
+
+---
+
+## 10. Process & Next Steps *(1 page)*
+
+1. NDA execution → receive full diligence package
+2. Management presentation: [date TBD]
+3. Indications of interest deadline: [date TBD]
+4. Binding bid deadline: [date TBD]
+5. Closing target: [date TBD]
+6. Contact: [Broker name and contact details]
+
+*All bids subject to seller's right to reject any or all offers.*
+
+---
+*This memorandum is confidential and may not be shared without written consent.*
+*Prepared under Value_Proposition_Framework_v3 — Rung 4.*
+"""
+
 
 def suggest_pattern(
     asset_count: int,
@@ -544,6 +1172,15 @@ def _template_listing_fallback(
     # Block 6 — CTA
     add('\n---\n*More information available upon request.*', 'T1')
 
+    # Block 7 — Meta tags (always present)
+    meta = generate_meta_tags(patent_attributes, package.transaction_type, package.bundle_codes or [])
+    tags_line = (
+        f"\n**Industries:** {' | '.join(meta['industries']) if meta['industries'] else 'N/A'}  \n"
+        f"**Technologies:** {' | '.join(meta['technologies']) if meta['technologies'] else 'N/A'}  \n"
+        f"**Transactions:** {' | '.join(meta['transactions'])}"
+    )
+    add(tags_line, 'T1')
+
     listing_text = '\n'.join(lines)
 
     # Tier report
@@ -670,32 +1307,33 @@ TIER REPORT
 
 def generate_value_proposition(package, bundle_data: dict, patent_attributes: list) -> dict:
     """
-    Generate a Teaser (Rung 1) and Value Proposition listing (Rung 2) for a SalesPackage.
-    Implements Value_Proposition_Framework_v3 Section 19 AI prompt with template fallback.
+    Full Rung 1+2 pipeline: Teaser + Listing + all validation layers.
 
     Returns:
-        {teaser, listing, tier_report, suggested_pattern, pattern_used}
+        teaser, listing, tier_report, suggested_pattern, pattern_used,
+        meta_tags, suggested_archetype, lint_results, quality_gates, tier_validation
     """
     bundle_codes = package.bundle_codes or []
-    archetype = package.primary_archetype or 'OC-DEF'
+    scorecard = bundle_data.get('scorecard', {})
     mcl_available = bool(package.mcl_entries)
     asset_count = len(patent_attributes) or len(bundle_codes) * 5
 
-    # Step 1: Suggest pattern (Section 18 decision tree)
-    suggested, reason = suggest_pattern(asset_count, mcl_available, bundle_codes, archetype)
+    # §4.5 — Auto-suggest archetype if not user-set
+    suggested_archetype, archetype_reason = suggest_archetype(bundle_codes, patent_attributes, scorecard)
+    archetype = package.primary_archetype or suggested_archetype
 
-    # Step 2: Use user override if set, else suggested
+    # §18 — Suggest pattern
+    suggested, _reason = suggest_pattern(asset_count, mcl_available, bundle_codes, archetype)
     pattern = package.listing_pattern or suggested
 
-    # Step 3: Build domain and best T3 signal for teaser
+    # Build domain + T3 signal for teaser
     domain = _get_domain_from_attributes(patent_attributes)
-    scorecard = bundle_data.get('scorecard', {})
     best_signal = _get_best_t3_signal(patent_attributes, scorecard, bundle_codes)
 
-    # Step 4: Generate teaser (always template-based — short, structured)
+    # Rung 1 — Teaser
     teaser = generate_teaser(package.name, asset_count, domain, archetype, best_signal)
 
-    # Step 5: Try LLM for full listing
+    # Rung 2 — Listing (LLM → template fallback)
     listing_text = None
     tier_report = None
     try:
@@ -703,28 +1341,36 @@ def generate_value_proposition(package, bundle_data: dict, patent_attributes: li
         from django.core.signing import Signer
         config = LLMProviderConfig.objects.filter(is_active=True).first()
         if config:
-            signer = Signer()
             try:
-                api_key = signer.unsign(config.api_key)
+                api_key = Signer().unsign(config.api_key)
             except Exception:
                 api_key = config.api_key
-
             prompt = _build_llm_prompt(package, bundle_data, patent_attributes, pattern)
             raw = None
             if config.provider == 'anthropic':
                 raw = _call_anthropic(api_key, prompt)
             elif config.provider == 'openai':
                 raw = _call_openai(api_key, prompt)
-
             if raw:
                 listing_text = raw
                 tier_report = _parse_tier_report_from_llm(raw)
     except Exception as e:
         logger.warning('LLM listing generation failed, using template fallback: %s', e)
 
-    # Step 6: Template fallback
     if not listing_text:
         listing_text, tier_report = _template_listing_fallback(package, bundle_data, patent_attributes, pattern)
+
+    # §10 Block 7 — Meta tags
+    meta_tags = generate_meta_tags(patent_attributes, package.transaction_type, bundle_codes)
+
+    # §15 — Failure-mode lint
+    lint_results = lint_listing(listing_text, package, tier_report, pattern)
+
+    # §17 — Quality gates
+    quality_gates = validate_quality_gates(package, scorecard, tier_report, listing_text, pattern)
+
+    # §5.5 — Tier coverage validation
+    tier_validation = validate_tier_coverage(tier_report)
 
     return {
         'teaser': teaser,
@@ -732,6 +1378,10 @@ def generate_value_proposition(package, bundle_data: dict, patent_attributes: li
         'tier_report': tier_report,
         'suggested_pattern': suggested,
         'pattern_used': pattern,
+        'meta_tags': meta_tags,
+        'suggested_archetype': suggested_archetype,
+        'archetype_reason': archetype_reason,
+        'lint_results': lint_results,
+        'quality_gates': quality_gates,
+        'tier_validation': tier_validation,
     }
-
-    return merged
