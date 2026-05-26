@@ -191,7 +191,7 @@ class SignupSerializer(serializers.ModelSerializer):
         # Create user
         user = User.objects.create_user(
             organization=organization,
-            status=User.Status.PENDING,  # Requires admin approval
+            status=User.Status.ACTIVE,
             **validated_data
         )
         
