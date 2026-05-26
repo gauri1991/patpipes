@@ -43,9 +43,18 @@ export const login = async (credentials: LoginRequest): Promise<LoginResponse> =
  */
 export const signup = async (userData: SignupRequest): Promise<SignupResponse> => {
   try {
+    const payload = {
+      email: userData.email,
+      password: userData.password,
+      password_confirm: userData.password,
+      first_name: userData.firstName,
+      last_name: userData.lastName,
+      organization_name: userData.companyName,
+    };
+
     const response = await apiClient.post<SignupResponse>(
       API_ENDPOINTS.auth.signup,
-      userData
+      payload
     );
 
     return response.data;
