@@ -1,0 +1,14 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.patpipes.com}
+    restart: always
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.patpipes.com}
+      BACKEND_INTERNAL_URL: ${NEXT_PUBLIC_API_URL:-https://api.patpipes.com}
+      PORT: 3001
+    ports:
+      - "3001:3001"
