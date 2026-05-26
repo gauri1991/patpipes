@@ -68,12 +68,10 @@ class USPTOODPClient:
         # Fallback to settings
         return getattr(settings, 'USPTO_ODP_API_KEY', '')
 
-    @property
-    def _headers(self) -> Dict[str, str]:
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        }
+    def _get_headers(self, include_content_type: bool = False) -> Dict[str, str]:
+        headers = {'Accept': 'application/json'}
+        if include_content_type:
+            headers['Content-Type'] = 'application/json'
         if self.api_key:
             headers['x-api-key'] = self.api_key
         return headers
@@ -104,7 +102,7 @@ class USPTOODPClient:
                 resp = requests.request(
                     method,
                     url,
-                    headers=self._headers,
+                    headers=self._get_headers(include_content_type=method not in ('GET', 'HEAD', 'DELETE')),
                     params=params,
                     json=json_body,
                     timeout=self.TIMEOUT,
