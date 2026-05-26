@@ -67,10 +67,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://147.93.96.76:8000}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://147.93.96.76:8000/api/v1}
     restart: always
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://147.93.96.76:8000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://147.93.96.76:8000/api/v1}
       BACKEND_INTERNAL_URL: http://backend:8000
       PORT: 3001
     depends_on:
