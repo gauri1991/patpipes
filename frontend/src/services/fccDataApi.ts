@@ -17,7 +17,7 @@ import type {
 } from '@/domains/fcc-data/types/fccData.types';
 
 class FCCDataApiService extends ApiClient {
-  private readonly BASE_PATH = '/fcc-data';
+  private readonly BASE_PATH = '/fcc';
 
   // --- Grantees ---
 
