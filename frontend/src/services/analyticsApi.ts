@@ -5,7 +5,7 @@
 
 import { ApiResponse, ApiClient } from './apiClient';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 export interface AnalyticsProject {
   id: string;
@@ -1023,7 +1023,7 @@ class AnalyticsApiService extends ApiClient {
   }
 
   async exportPresentationPPTX(presentationId: string): Promise<Blob> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/analytics/api/presentations/${presentationId}/export_pptx/`, {
+    const response = await fetch(`${API_BASE_URL}/analytics/api/presentations/${presentationId}/export_pptx/`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.getToken()}`,
@@ -1033,7 +1033,7 @@ class AnalyticsApiService extends ApiClient {
   }
 
   async exportPresentationPDF(presentationId: string): Promise<Blob> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/analytics/api/presentations/${presentationId}/export_pdf/`, {
+    const response = await fetch(`${API_BASE_URL}/analytics/api/presentations/${presentationId}/export_pdf/`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.getToken()}`,
@@ -1497,7 +1497,7 @@ class AnalyticsApiService extends ApiClient {
     created: boolean;
   }>> {
     const token = this.getToken();
-    const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
     const form = new FormData();
     form.append('file', file);
     if (name) form.append('name', name);

@@ -108,7 +108,7 @@ export function DatasetsTab({ projectId, datasets, onDatasetsChange }: DatasetsT
     setPortfoliosLoading(true);
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/patents/portfolios/?limit=200`,
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/patents/portfolios/?limit=200`,
         { headers: { 'Authorization': `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('patpipes_access_token') : ''}` } }
       );
       if (response.ok) {
