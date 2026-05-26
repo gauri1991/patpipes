@@ -18,8 +18,12 @@ import { PatentDocumentsTab } from '@/components/patent-search/PatentDocumentsTa
 import { PatentForeignPriorityTab } from '@/components/patent-search/PatentForeignPriorityTab';
 import { PatentAdjustmentTab } from '@/components/patent-search/PatentAdjustmentTab';
 import { PatentFullTextTab } from '@/components/patent-search/PatentFullTextTab';
+import { LensEnrichmentTab } from '@/components/patent-search/LensEnrichmentTab';
+import { DataSourceSelector, type DataSource } from '@/components/patent-search/DataSourceSelector';
 import usptoOdpApi from '@/services/usptoOdpApi';
 import type { ODPApplication } from '@/services/usptoOdpApi';
+import lensApi from '@/services/lensApi';
+import type { LensPatent } from '@/services/lensApi';
 
 type PageState = 'empty' | 'loading' | 'results' | 'error';
 
@@ -32,12 +36,27 @@ export default function PatentSearchPage() {
   const [appId, setAppId] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState('');
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(['overview']));
+  const [dataSource, setDataSource] = useState<DataSource>('odp');
+  const [lensData, setLensData] = useState<LensPatent | null>(null);
+  const [lensLoading, setLensLoading] = useState(false);
+
+  const prefetchLens = useCallback((patentNumber: string) => {
+    if (!patentNumber) return;
+    setLensData(null);
+    setLensLoading(true);
+    lensApi.getPatentByDocNumber(patentNumber, 'US').then((res) => {
+      setLensData(res.success && res.data?.patent ? res.data.patent : null);
+      setLensLoading(false);
+    }).catch(() => setLensLoading(false));
+  }, []);
 
   const doSearch = useCallback(
     async (query: string) => {
       setState('loading');
       setErrorMsg('');
       setAppData(null);
+      setLensData(null);
+      setLensLoading(false);
       setLoadedTabs(new Set(['overview']));
 
       try {
@@ -60,9 +79,11 @@ export default function PatentSearchPage() {
             resolvedAppId =
               appItem.applicationNumberText?.replace(/[^0-9]/g, '') ||
               parsed.value;
+            const patNum = (appItem as ODPApplication).applicationMetaData?.patentNumber || '';
             setAppData(appItem as ODPApplication);
             setAppId(resolvedAppId);
             setState('results');
+            if (patNum) prefetchLens(patNum);
 
             const params = new URLSearchParams();
             params.set('app', resolvedAppId);
@@ -83,9 +104,11 @@ export default function PatentSearchPage() {
         const appRes = await usptoOdpApi.getApplication(resolvedAppId);
 
         if (appRes.success && appRes.data) {
+          const patNum = appRes.data.applicationMetaData?.patentNumber || '';
           setAppData(appRes.data);
           setAppId(resolvedAppId);
           setState('results');
+          if (patNum) prefetchLens(patNum);
 
           const params = new URLSearchParams();
           params.set('app', resolvedAppId);
@@ -245,75 +268,94 @@ export default function PatentSearchPage() {
             </CardContent>
           </Card>
 
-          {/* Tabs */}
-          <Tabs
-            defaultValue="overview"
-            onValueChange={handleTabChange}
-          >
-            <TabsList className="flex flex-wrap h-auto gap-1">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="continuity">Continuity</TabsTrigger>
-              <TabsTrigger value="assignments">Assignments</TabsTrigger>
-              <TabsTrigger value="attorney">Attorney</TabsTrigger>
-              <TabsTrigger value="transactions">Transactions</TabsTrigger>
-              <TabsTrigger value="documents">Documents</TabsTrigger>
-              <TabsTrigger value="foreign-priority">Foreign Priority</TabsTrigger>
-              <TabsTrigger value="adjustment">PTA/PTE</TabsTrigger>
-              <TabsTrigger value="full-text">Full Text</TabsTrigger>
-            </TabsList>
+          {/* Data Source Selector */}
+          <div className="flex items-center justify-between">
+            <DataSourceSelector
+              value={dataSource}
+              onChange={setDataSource}
+              hasOdp={true}
+              hasLens={!!meta.patentNumber}
+            />
+            {lensLoading && (
+              <span className="text-xs text-muted-foreground animate-pulse">Fetching Lens.org data…</span>
+            )}
+          </div>
 
-            <TabsContent value="overview" className="mt-4">
-              <PatentOverviewTab data={appData} />
-            </TabsContent>
+          {/* USPTO ODP Tabs */}
+          {(dataSource === 'odp' || dataSource === 'both') && (
+            <Tabs defaultValue="overview" onValueChange={handleTabChange}>
+              <TabsList className="flex flex-wrap h-auto gap-1">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="continuity">Continuity</TabsTrigger>
+                <TabsTrigger value="assignments">Assignments</TabsTrigger>
+                <TabsTrigger value="attorney">Attorney</TabsTrigger>
+                <TabsTrigger value="transactions">Transactions</TabsTrigger>
+                <TabsTrigger value="documents">Documents</TabsTrigger>
+                <TabsTrigger value="foreign-priority">Foreign Priority</TabsTrigger>
+                <TabsTrigger value="adjustment">PTA/PTE</TabsTrigger>
+                <TabsTrigger value="full-text">Full Text</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="continuity" className="mt-4">
-              {loadedTabs.has('continuity') && (
-                <PatentContinuityTab appId={appId} appData={appData} onNavigate={handleNavigate} />
+              <TabsContent value="overview" className="mt-4">
+                <PatentOverviewTab data={appData} />
+              </TabsContent>
+              <TabsContent value="continuity" className="mt-4">
+                {loadedTabs.has('continuity') && (
+                  <PatentContinuityTab appId={appId} appData={appData} onNavigate={handleNavigate} />
+                )}
+              </TabsContent>
+              <TabsContent value="assignments" className="mt-4">
+                {loadedTabs.has('assignments') && (
+                  <PatentAssignmentTab appId={appId} appData={appData} />
+                )}
+              </TabsContent>
+              <TabsContent value="attorney" className="mt-4">
+                {loadedTabs.has('attorney') && (
+                  <PatentAttorneyTab appId={appId} appData={appData} />
+                )}
+              </TabsContent>
+              <TabsContent value="transactions" className="mt-4">
+                {loadedTabs.has('transactions') && (
+                  <PatentTransactionsTab appId={appId} appData={appData} />
+                )}
+              </TabsContent>
+              <TabsContent value="documents" className="mt-4">
+                {loadedTabs.has('documents') && <PatentDocumentsTab appId={appId} />}
+              </TabsContent>
+              <TabsContent value="foreign-priority" className="mt-4">
+                {loadedTabs.has('foreign-priority') && <PatentForeignPriorityTab appId={appId} />}
+              </TabsContent>
+              <TabsContent value="adjustment" className="mt-4">
+                {loadedTabs.has('adjustment') && (
+                  <PatentAdjustmentTab appId={appId} appData={appData} />
+                )}
+              </TabsContent>
+              <TabsContent value="full-text" className="mt-4">
+                {loadedTabs.has('full-text') && <PatentFullTextTab appId={appId} />}
+              </TabsContent>
+            </Tabs>
+          )}
+
+          {/* Lens.org Enrichment */}
+          {(dataSource === 'lens' || dataSource === 'both') && (
+            <div className="mt-2">
+              {meta.patentNumber ? (
+                <LensEnrichmentTab
+                  patentNumber={meta.patentNumber}
+                  onNavigate={handleNavigate}
+                  prefetchedData={lensData}
+                  prefetchedLoading={lensLoading}
+                />
+              ) : (
+                <Card>
+                  <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                    Lens.org enrichment requires a granted patent number. This application has not yet been granted.
+                  </CardContent>
+                </Card>
               )}
-            </TabsContent>
+            </div>
+          )}
 
-            <TabsContent value="assignments" className="mt-4">
-              {loadedTabs.has('assignments') && (
-                <PatentAssignmentTab appId={appId} appData={appData} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="attorney" className="mt-4">
-              {loadedTabs.has('attorney') && (
-                <PatentAttorneyTab appId={appId} appData={appData} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="transactions" className="mt-4">
-              {loadedTabs.has('transactions') && (
-                <PatentTransactionsTab appId={appId} appData={appData} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="documents" className="mt-4">
-              {loadedTabs.has('documents') && (
-                <PatentDocumentsTab appId={appId} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="foreign-priority" className="mt-4">
-              {loadedTabs.has('foreign-priority') && (
-                <PatentForeignPriorityTab appId={appId} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="adjustment" className="mt-4">
-              {loadedTabs.has('adjustment') && (
-                <PatentAdjustmentTab appId={appId} appData={appData} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="full-text" className="mt-4">
-              {loadedTabs.has('full-text') && (
-                <PatentFullTextTab appId={appId} />
-              )}
-            </TabsContent>
-          </Tabs>
         </>
       )}
     </div>
