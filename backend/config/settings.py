@@ -149,6 +149,10 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.29.81:3001",
 ]
 
+_cors_extra = config('CORS_ALLOWED_ORIGINS', default='')
+if _cors_extra:
+    CORS_ALLOWED_ORIGINS += [o.strip() for o in _cors_extra.split(',') if o.strip()]
+
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only for development
