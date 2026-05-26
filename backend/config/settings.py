@@ -54,6 +54,7 @@ DOMAIN_APPS = [
     'domains.attorney',  # NEW: Attorney network and professional directory
     'domains.collaboration',  # NEW: Real-time collaboration features
     'domains.help',  # Help & documentation hub
+    'domains.web_search',  # Web search
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + DOMAIN_APPS

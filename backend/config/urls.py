@@ -42,6 +42,9 @@ api_v1_patterns = [
 
     # Help & documentation domain
     path('help/', include('domains.help.urls', namespace='help-api')),
+
+    # Web Search domain
+    path('web-search/', include('domains.web_search.urls', namespace='web_search')),
 ]
 
 urlpatterns = [
