@@ -939,7 +939,7 @@ function ClaimsParser({ claimsText, claimsStructure, independentCount, dependent
                           {claim.type === 'independent' ? 'Independent' : 'Dependent'}
                         </Badge>
                       </div>
-                      {claim.references.length > 0 && (
+                      {(claim.references?.length ?? 0) > 0 && (
                         <div className="text-xs text-muted-foreground">
                           Refs: {claim.references.join(', ')}
                         </div>

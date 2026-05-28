@@ -46,21 +46,64 @@ function CollapsibleSection({
   );
 }
 
-function isDependent(claimText: string): boolean {
-  return /\bclaim\s+\d/i.test(claimText);
+// Robust dependent-claim detection — same logic as the backend bundle parser.
+// Catches typos like "The system of 1" (missing the word "claim") that the
+// USPTO source occasionally has.
+function classifyClaim(text: string): { type: 'independent' | 'dependent'; refs: number[] } {
+  const head = text.slice(0, 200);
+  const patterns: RegExp[] = [
+    /\bof\s+claim\s+(\d+)\b/i,
+    /\baccording\s+to\s+claim\s+(\d+)\b/i,
+    /\bas\s+(?:in|recited\s+in|claimed\s+in|set\s+forth\s+in)\s+claim\s+(\d+)\b/i,
+    /\bclaim\s+(\d+)\b/i,
+    // Typo fallbacks
+    /^\s*\d+\.\s*The\s+\w+\s+of\s+(\d+)[,\s]/im,
+    /^\s*\d+\.\s*The\s+\w+\s+according\s+to\s+(\d+)[,\s]/im,
+  ];
+  for (const p of patterns) {
+    if (p.test(head)) {
+      const all = Array.from(text.matchAll(new RegExp(p.source, p.flags + 'g')));
+      const refs = Array.from(new Set(all.map(m => parseInt(m[1] ?? '', 10)).filter(n => !Number.isNaN(n))));
+      return { type: 'dependent', refs };
+    }
+  }
+  return { type: 'independent', refs: [] };
+}
+
+// Pull the claim number from the start ("1. A system..." → 1), else fall back to index+1.
+function extractClaimNumber(text: string, fallback: number): number {
+  const m = text.match(/^\s*(\d+)\.\s/);
+  if (m) return parseInt(m[1] ?? '', 10);
+  return fallback;
 }
 
 function ClaimBlock({ claim, index }: { claim: string; index: number }) {
-  const dependent = isDependent(claim);
+  const { type, refs } = classifyClaim(claim);
+  const num = extractClaimNumber(claim, index + 1);
+  // If the claim text doesn't already start with "N." prefix it
+  // (defensive — the corrected backend parser should always include it).
+  const displayText = /^\s*\d+\.\s/.test(claim) ? claim : `${num}. ${claim}`;
+  const isInd = type === 'independent';
+
   return (
     <div
-      className={`rounded-md border p-3 text-sm leading-relaxed whitespace-pre-wrap font-mono ${
-        dependent
-          ? 'border-border bg-muted/30 text-muted-foreground'
-          : 'border-primary/40 bg-primary/5'
+      className={`rounded-md border p-3 text-sm leading-relaxed whitespace-pre-wrap ${
+        isInd
+          ? 'border-primary/40 bg-primary/5'
+          : 'border-border bg-muted/30 text-muted-foreground ml-4'
       }`}
     >
-      {claim}
+      <div className="flex items-center gap-2 mb-1 font-sans not-italic">
+        <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${
+          isInd ? 'bg-primary text-primary-foreground' : 'bg-muted-foreground/20'
+        }`}>
+          Claim {num}
+        </span>
+        <span className={`text-xs font-medium ${isInd ? 'text-primary' : 'text-muted-foreground'}`}>
+          {isInd ? 'Independent' : `Dependent (refs ${refs.length ? refs.join(', ') : '?'})`}
+        </span>
+      </div>
+      <div className="font-mono">{displayText}</div>
     </div>
   );
 }
@@ -78,15 +121,23 @@ function ParsedTextView({ text }: { text: ODPParsedText }) {
           <div className="pt-3 whitespace-pre-wrap leading-relaxed">{text.description}</div>
         </CollapsibleSection>
       )}
-      {text.claims.length > 0 && (
-        <CollapsibleSection title={`Claims (${text.claims.length})`} defaultOpen>
-          <div className="pt-3 space-y-2">
-            {text.claims.map((claim, i) => (
-              <ClaimBlock key={i} claim={claim} index={i} />
-            ))}
-          </div>
-        </CollapsibleSection>
-      )}
+      {text.claims.length > 0 && (() => {
+        const classified = text.claims.map(c => classifyClaim(c).type);
+        const indCount = classified.filter(t => t === 'independent').length;
+        const depCount = classified.length - indCount;
+        return (
+          <CollapsibleSection
+            title={`Claims — ${text.claims.length} total (${indCount} independent, ${depCount} dependent)`}
+            defaultOpen
+          >
+            <div className="pt-3 space-y-2">
+              {text.claims.map((claim, i) => (
+                <ClaimBlock key={i} claim={claim} index={i} />
+              ))}
+            </div>
+          </CollapsibleSection>
+        );
+      })()}
     </div>
   );
 }

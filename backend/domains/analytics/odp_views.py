@@ -48,37 +48,52 @@ def _parse_claim_element(claim_el) -> str:
     """
     Convert a <claim> XML element to readable text.
 
-    USPTO grant XML structure:
+    USPTO publication XML mixes inline formatting tags into the preamble:
       <claim>
-        <claim-text>1. A method comprising:        ← preamble (direct text)
-          <claim-text>step one;</claim-text>        ← each limitation is a nested child
-          <claim-text>step two.</claim-text>
+        <claim-text>
+          <b>1</b>. A system, comprising:           ← preamble (mixed content with <b>)
+          <claim-text>one or more processors…</claim-text>   ← each step
+          <claim-text>a memory coupled to…</claim-text>
         </claim-text>
       </claim>
 
-    We join the preamble and each step with newlines so the rendered text
-    preserves the multi-step structure instead of running everything together.
+    The preamble lives in the text() nodes BEFORE the first nested <claim-text>,
+    interleaved with formatting tags like <b>. The original parser only read
+    outer.text which is empty in this structure — losing the claim number and
+    opening clause. Walk the element tree explicitly to capture mixed content.
     """
     outer = claim_el.find('claim-text')
     if outer is None:
         return _all_text(claim_el)
 
-    steps = outer.findall('claim-text')
-    if not steps:
-        # Simple single-line claim (e.g. most dependent claims)
+    nested_steps = outer.findall('claim-text')
+    if not nested_steps:
+        # Simple single-line claim (most dependent claims) — _all_text handles
+        # mixed inline tags (<b>, <i>, etc.) cleanly.
         return _all_text(outer)
 
-    # Preamble = the direct text of the outer <claim-text> before any children
-    preamble_parts = []
-    if outer.text:
-        preamble_parts.append(outer.text.strip())
-    # Inline tail text of child elements that sit between nested <claim-text>s is rare
-    # but handle it to avoid data loss.
-    # We reconstruct by walking children until we hit a <claim-text> child.
+    # Capture the preamble: text() and inline (non-claim-text) children
+    # that appear BEFORE the first nested <claim-text>.
+    preamble_parts: list[str] = []
+    if outer.text and outer.text.strip():
+        preamble_parts.append(outer.text)
+    for child in outer:
+        if child.tag == 'claim-text':
+            break  # start of step list
+        # Inline formatting tag (e.g. <b>1</b>) — include its text + tail
+        if child.text:
+            preamble_parts.append(child.text)
+        if child.tail:
+            preamble_parts.append(child.tail)
+
+    preamble = ''.join(preamble_parts).strip()
+    # Normalise whitespace runs without destroying line breaks added by the data
+    preamble = ' '.join(preamble.split())
+
     lines = []
-    if preamble_parts:
-        lines.append(' '.join(preamble_parts))
-    for step in steps:
+    if preamble:
+        lines.append(preamble)
+    for step in nested_steps:
         step_text = _all_text(step)
         if step_text:
             lines.append(step_text)
@@ -386,9 +401,9 @@ class USPTOODPViewSet(GenericViewSet):
         model_key = request.data.get('model', 'sonnet')
         prompt_category = request.data.get('prompt_category', 'general')
 
-        if model_key not in ('sonnet', 'opus'):
+        if model_key not in ('sonnet', 'opus', 'haiku'):
             return Response(
-                {'error': f'Invalid model: {model_key}. Choose sonnet or opus.'},
+                {'error': f'Invalid model: {model_key}. Choose sonnet, opus, or haiku.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

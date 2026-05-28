@@ -24,15 +24,54 @@ logger = logging.getLogger(__name__)
 # Model configuration
 # ---------------------------------------------------------------------------
 
+# Fallback model IDs when the admin LLMProviderConfig isn't configured.
+# Production should read from LLMProviderConfig.resolved_model — see _resolve_model_id().
 MODEL_MAP = {
     'sonnet': 'claude-sonnet-4-6',
-    'opus': 'claude-opus-4-6',
+    'opus':   'claude-opus-4-6',
+    'haiku':  'claude-haiku-4-5-20251001',
 }
 
+# Current Anthropic pricing per million tokens (sourced from docs.anthropic.com).
+# Note: Opus 4.x is $5/$25, NOT $15/$75 — Opus 4.1 (legacy) is the only one at the higher rate.
 MODEL_PRICING = {
-    'claude-sonnet-4-6': {'input': 3.00, 'output': 15.00},
-    'claude-opus-4-6': {'input': 15.00, 'output': 75.00},
+    # Opus family (current — $5/$25)
+    'claude-opus-4-8':           {'input': 5.00,  'output': 25.00},
+    'claude-opus-4-7':           {'input': 5.00,  'output': 25.00},
+    'claude-opus-4-6':           {'input': 5.00,  'output': 25.00},
+    'claude-opus-4-5':           {'input': 5.00,  'output': 25.00},
+    # Opus 4.1 — legacy, higher cost
+    'claude-opus-4-1':           {'input': 15.00, 'output': 75.00},
+    # Sonnet family ($3/$15)
+    'claude-sonnet-4-6':         {'input': 3.00,  'output': 15.00},
+    'claude-sonnet-4-5':         {'input': 3.00,  'output': 15.00},
+    # Haiku ($1/$5)
+    'claude-haiku-4-5-20251001': {'input': 1.00,  'output': 5.00},
 }
+
+
+def _resolve_model_id(model_key: str) -> str:
+    """Resolve a UI model key (sonnet/opus/haiku) to a concrete Anthropic model ID.
+
+    Priority:
+      1. Admin LLMProviderConfig.resolved_model (if anthropic provider is active)
+      2. Hardcoded MODEL_MAP fallback
+    """
+    try:
+        from .models import LLMProviderConfig
+        cfg = LLMProviderConfig.objects.filter(provider='anthropic', is_active=True).first()
+        if cfg:
+            resolved = cfg.resolved_model
+            # If the admin chose a model that matches the tier the user picked, prefer it
+            if resolved and (
+                (model_key == 'sonnet' and 'sonnet' in resolved) or
+                (model_key == 'opus'   and 'opus'   in resolved) or
+                (model_key == 'haiku'  and 'haiku'  in resolved)
+            ):
+                return resolved
+    except Exception:
+        pass
+    return MODEL_MAP.get(model_key, MODEL_MAP['sonnet'])
 
 
 def _estimate_cost(model_id: str, input_tokens: int, output_tokens: int) -> float:
@@ -86,8 +125,42 @@ def _truncate(text: str, max_tokens: int = 40000) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Algorithmic: Claim Dependency Tree
+# Claim dependency detection — robust against source-data typos
+# (e.g. "The system of 1, wherein..." missing the word "claim")
 # ---------------------------------------------------------------------------
+
+_DEP_CLAIM_PATTERNS = [
+    r'\bof\s+claim\s+(\d+)\b',
+    r'\baccording\s+to\s+claim\s+(\d+)\b',
+    r'\bas\s+(?:in|recited\s+in|claimed\s+in|set\s+forth\s+in)\s+claim\s+(\d+)\b',
+    r'\bclaim\s+(\d+)\b',
+    # Typo fallbacks — dropped "claim" word
+    r'^\s*\d+\.\s*The\s+\w+\s+of\s+(\d+)[,\s]',
+    r'^\s*\d+\.\s*The\s+\w+\s+according\s+to\s+(\d+)[,\s]',
+]
+
+
+def _is_dependent_claim(claim_text: str) -> bool:
+    """Return True if claim_text references another claim — supports common typos."""
+    head = claim_text[:200]
+    for pat in _DEP_CLAIM_PATTERNS:
+        if re.search(pat, head, re.IGNORECASE | re.MULTILINE):
+            return True
+    return False
+
+
+def _find_parent_claim(claim_text: str) -> int | None:
+    """Return parent claim number if this is a dependent claim, else None."""
+    head = claim_text[:200]
+    for pat in _DEP_CLAIM_PATTERNS:
+        m = re.search(pat, head, re.IGNORECASE | re.MULTILINE)
+        if m:
+            try:
+                return int(m.group(1))
+            except (ValueError, IndexError):
+                continue
+    return None
+
 
 def build_claim_tree(claims: list[str]) -> dict:
     tree = {'independent': [], 'dependent': [], 'tree': {}}
@@ -98,14 +171,8 @@ def build_claim_tree(claims: list[str]) -> dict:
         if num_match:
             claim_num = int(num_match.group(1))
 
-        dep_match = re.search(
-            r'(?:of|in|according\s+to|as\s+(?:recited|claimed|set\s+forth)\s+in)\s+claim\s+(\d+)',
-            claim_text,
-            re.IGNORECASE,
-        )
-
-        if dep_match:
-            parent = int(dep_match.group(1))
+        parent = _find_parent_claim(claim_text)
+        if parent is not None:
             tree['dependent'].append({
                 'claim_number': claim_num,
                 'depends_on': parent,
@@ -136,13 +203,39 @@ SYSTEM_BASE = (
 
 
 def _call_llm(client, model_id: str, system: str, user: str, max_tokens: int = 4096) -> dict:
-    response = client.messages.create(
-        model=model_id,
-        max_tokens=max_tokens,
-        temperature=0.1,
-        system=system,
-        messages=[{'role': 'user', 'content': user}],
-    )
+    """Call Anthropic with explicit 429 retry — Tier 1 (8K output TPM) is easy to exceed
+    when multiple sections of an analysis run back-to-back.
+    """
+    import anthropic as _anthropic
+
+    response = None
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.messages.create(
+                model=model_id,
+                max_tokens=max_tokens,
+                temperature=0,  # deterministic JSON output
+                system=system,
+                messages=[{'role': 'user', 'content': user}],
+            )
+            break
+        except _anthropic.RateLimitError:
+            if attempt >= max_retries:
+                logger.error('Anthropic rate limit: retries exhausted (model=%s, section call)', model_id)
+                raise
+            wait = 30 * (2 ** attempt)   # 30 s, 60 s, 120 s
+            logger.warning('Anthropic rate limit hit (attempt %d/%d) — sleeping %ds', attempt + 1, max_retries, wait)
+            time.sleep(wait)
+        except _anthropic.APIStatusError as e:
+            if e.status_code == 529 and attempt < max_retries:  # overloaded
+                wait = 15 * (2 ** attempt)
+                logger.warning('Anthropic overloaded — sleeping %ds', wait)
+                time.sleep(wait)
+                continue
+            raise
+
+    assert response is not None  # mypy/lint hint
 
     text = response.content[0].text
     input_tokens = response.usage.input_tokens
@@ -466,7 +559,8 @@ class PatentAnalysisService:
                 'Anthropic client not available. Set ANTHROPIC_API_KEY in Admin > LLM Keys or as environment variable.'
             )
 
-        model_id = MODEL_MAP.get(model_key, MODEL_MAP['sonnet'])
+        # Resolve model via admin config first, fall back to hardcoded map
+        model_id = _resolve_model_id(model_key)
         start_time = time.time()
 
         abstract = patent_text.get('abstract', '')
@@ -480,11 +574,11 @@ class PatentAnalysisService:
         claims_text = '\n\n'.join(
             f"Claim {i + 1}: {c}" for i, c in enumerate(claims)
         )
+        # Use the same robust dependent-claim detection as bundle scoring
+        # (catches typos like "system of 1" missing the word "claim")
         independent_claims_text = '\n\n'.join(
             f"Claim {i + 1}: {c}" for i, c in enumerate(claims)
-            if not re.search(
-                r'(?:of|in|according\s+to)\s+claim\s+\d+', c, re.IGNORECASE
-            )
+            if not _is_dependent_claim(c)
         )
 
         desc_sections = _split_description_sections(description)
@@ -566,13 +660,10 @@ class PatentAnalysisService:
             ),
         }
 
-        # Claim scope runs per independent claim
-        independent_claims_list = []
-        for i, c in enumerate(claims):
-            if not re.search(
-                r'(?:of|in|according\s+to)\s+claim\s+\d+', c, re.IGNORECASE
-            ):
-                independent_claims_list.append((i + 1, c))
+        # Claim scope runs per independent claim — robust detection (handles typos)
+        independent_claims_list = [
+            (i + 1, c) for i, c in enumerate(claims) if not _is_dependent_claim(c)
+        ]
 
         # Pre-load the claim_scope prompt template once
         claim_scope_template, claim_scope_meta = _load_prompt('claim_scope', prompt_category)
@@ -595,7 +686,16 @@ class PatentAnalysisService:
                 SECTION_MAX_TOKENS['claim_scope'],
             )
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        # Concurrency cap — pinned to the Anthropic tier's output token budget.
+        # An AI analysis fires up to 14 LLM calls (6 sections + up to 8 claim_scope).
+        # Output budget per call averages ~2.5-3K tokens.
+        #
+        #   Tier 1 ($5):   8K out-TPM → max_workers=1 (sequential — safe, no 429s)
+        #   Tier 2 ($40): 32K out-TPM → max_workers=4 (the historical default)
+        #   Tier 3 ($200): 64K+ out-TPM → max_workers=8
+        #
+        # Set conservatively for Tier 1 — bump after credit purchase.
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {}
 
             for section_name, task_fn in section_tasks.items():

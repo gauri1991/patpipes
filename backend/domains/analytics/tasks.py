@@ -125,16 +125,19 @@ def run_bulk_attribute_extraction_task(self, project_id: str, patent_record_ids:
     from .bundle_attribute_service import extract_bundle_attributes_via_llm
     from .models import PatentDataset, PatentRecord
 
+    dataset_ids = list(PatentDataset.objects.filter(project_id=project_id).values_list('id', flat=True))
+
     if patent_record_ids is None:
-        dataset_ids = PatentDataset.objects.filter(project_id=project_id).values_list('id', flat=True)
-        patent_record_ids = list(PatentRecord.objects.filter(dataset_id__in=dataset_ids).values_list('id', flat=True))
-        patent_record_ids = [str(i) for i in patent_record_ids]
+        patent_record_ids = [str(i) for i in PatentRecord.objects.filter(dataset_id__in=dataset_ids).values_list('id', flat=True)]
+
+    # Preload CPC definitions once for all patents in this project (avoids N per-patent DB queries)
+    cpc_cache = _build_cpc_cache(dataset_ids)
 
     extracted_count = 0
     failed_count = 0
     for rec_id in patent_record_ids:
         try:
-            result = extract_bundle_attributes_via_llm(str(rec_id), fields)
+            result = extract_bundle_attributes_via_llm(str(rec_id), fields, cpc_cache=cpc_cache)
             extracted_count += len(result)
         except Exception:
             failed_count += 1
@@ -148,16 +151,20 @@ def run_technology_classification_task(self, project_id: str, patent_record_ids:
     from .bundle_attribute_service import classify_group_a_via_llm
     from .models import PatentDataset, PatentRecord
 
+    dataset_ids = list(PatentDataset.objects.filter(project_id=project_id).values_list('id', flat=True))
+
     if patent_record_ids is None:
-        dataset_ids = PatentDataset.objects.filter(project_id=project_id).values_list('id', flat=True)
         patent_record_ids = [str(i) for i in PatentRecord.objects.filter(dataset_id__in=dataset_ids).values_list('id', flat=True)]
+
+    # Preload CPC definitions once for all patents in this project
+    cpc_cache = _build_cpc_cache(dataset_ids)
 
     classified_count = 0
     skipped_count = 0
     failed_count = 0
     for rec_id in patent_record_ids:
         try:
-            result = classify_group_a_via_llm(str(rec_id), force=force)
+            result = classify_group_a_via_llm(str(rec_id), force=force, cpc_cache=cpc_cache)
             if result:
                 classified_count += 1
             else:
@@ -171,6 +178,36 @@ def run_technology_classification_task(self, project_id: str, patent_record_ids:
         'failed_count': failed_count,
         'total': len(patent_record_ids),
     }
+
+
+def _build_cpc_cache(dataset_ids: list) -> dict:
+    """Preload CPC titles for all unique codes used by patents in the given datasets."""
+    try:
+        from .models import PatentRecord
+        from domains.patents.models import ClassificationDefinition
+
+        all_cpc_raw = PatentRecord.objects.filter(
+            dataset_id__in=dataset_ids
+        ).values_list('cpc_classification', flat=True)
+
+        unique_codes: set = set()
+        for raw in all_cpc_raw:
+            for c in str(raw or '').replace(';', ',').replace('|', ',').split(','):
+                c = c.strip()
+                if c:
+                    unique_codes.add(c)
+
+        if not unique_codes:
+            return {}
+
+        return {
+            d['code']: d['title']
+            for d in ClassificationDefinition.objects.filter(
+                system='CPC', code__in=unique_codes
+            ).values('code', 'title')
+        }
+    except Exception:
+        return {}
 
 
 def _persist_and_cache(project_id: str, analysis_type: str, result: dict):

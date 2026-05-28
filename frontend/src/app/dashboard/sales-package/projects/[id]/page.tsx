@@ -356,6 +356,9 @@ export default function SalesPackageProjectDetail() {
   const [patentDetailTab, setPatentDetailTab] = useState<'attributes' | 'text' | 'claims'>('attributes');
   const [selectedAttrIds, setSelectedAttrIds] = useState<Set<string>>(new Set());
   const [aiScoring, setAiScoring] = useState(false);
+  const [groupAScoring, setGroupAScoring] = useState(false);
+  // Live progress for bulk operations
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; label: string } | null>(null);
 
   // Configuration
   const [preset, setPreset] = useState('all_on');
@@ -505,18 +508,90 @@ export default function SalesPackageProjectDetail() {
     'i1_product_mapping_confidence','i2_implementation_maturity','i3_adjacent_market_reread','i4_workaround_complexity',
   ];
 
+  // ── Bulk processor: concurrent batches with live progress ───────────────
+  // Fires CONCURRENCY calls in parallel, waits for the batch, then starts the next.
+  // First call primes the Anthropic prompt cache; subsequent calls all cache-hit.
+  //
+  // Anthropic output token rate limits (binding constraint = output TPM):
+  //   Tier 1 ($5):   8,000 out-TPM  → safe at CONCURRENCY = 1  (sequential, ~152 min / 1302 patents)
+  //   Tier 2 ($40): 32,000 out-TPM  → safe at CONCURRENCY = 5  (~30 min / 1302 patents)
+  //   Tier 3 ($200): 64,000+ out-TPM → safe at CONCURRENCY = 10+ (~15 min / 1302 patents)
+  //
+  // Each patent produces ~550 output tokens.  Formula: CONCURRENCY ≤ (out-TPM / 550) × (7s / 60s)
+  const CONCURRENCY = 1; // Tier 1 safe — change to 5 after reaching Tier 2 ($40 purchased)
+
+  const runBulkWithProgress = async (
+    ids: string[],
+    label: string,
+    callFn: (id: string) => Promise<unknown>,
+  ) => {
+    if (!projectId || ids.length === 0) return;
+    setBulkProgress({ done: 0, total: ids.length, label });
+    let done = 0;
+
+    // Batch 1: single patent to prime the Anthropic prompt cache
+    try { await callFn(ids[0]); } catch { /* skip */ }
+    done = 1;
+    setBulkProgress({ done, total: ids.length, label });
+
+    // Remaining batches: CONCURRENCY in parallel
+    for (let i = 1; i < ids.length; i += CONCURRENCY) {
+      const batch = ids.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(batch.map(id => callFn(id)));
+      done += batch.length;
+      setBulkProgress({ done, total: ids.length, label });
+      // Refresh table after each batch so scores appear live
+      await loadAttributes(0);
+    }
+
+    setBulkProgress(null);
+  };
+
   // ── AI score all ─────────────────────────────────────────────────────────
   const scoreAllWithAI = async () => {
     if (!projectId || aiScoring) return;
     setAiScoring(true);
-    await analyticsApi.extractBundleAttributes(projectId, undefined, HI_FIELDS);
+    // Collect all unscored patent IDs for this project
+    const res = await analyticsApi.getBundleAttributes(projectId, 200, 0);
+    const ids = res.success && res.data
+      ? res.data.results.map((a: { patent_record_id: string }) => a.patent_record_id)
+      : [];
+    await runBulkWithProgress(
+      ids,
+      'Scoring H&I quality attributes',
+      (id) => analyticsApi.extractBundleAttributes(projectId, [id], HI_FIELDS),
+    );
     setAiScoring(false);
-    await loadAttributes(0);
   };
 
   const scoreSingleWithAI = async (recId: string) => {
     if (!projectId) return;
+    setBulkProgress({ done: 0, total: 1, label: 'Scoring H&I attributes…' });
     await analyticsApi.extractBundleAttributes(projectId, [recId], HI_FIELDS);
+    setBulkProgress(null);
+    await loadAttributes(0);
+  };
+
+  const classifyAllGroupA = async () => {
+    if (!projectId || groupAScoring) return;
+    setGroupAScoring(true);
+    const res = await analyticsApi.getBundleAttributes(projectId, 200, 0);
+    const ids = res.success && res.data
+      ? res.data.results.map((a: { patent_record_id: string }) => a.patent_record_id)
+      : [];
+    await runBulkWithProgress(
+      ids,
+      'Classifying technology domains (Group A)',
+      (id) => analyticsApi.classifyTechnology(projectId, [id]),
+    );
+    setGroupAScoring(false);
+  };
+
+  const classifySingleGroupA = async (recId: string) => {
+    if (!projectId) return;
+    setBulkProgress({ done: 0, total: 1, label: 'Classifying technology domain…' });
+    await analyticsApi.classifyTechnology(projectId, [recId]);
+    setBulkProgress(null);
     await loadAttributes(0);
   };
 
@@ -783,7 +858,7 @@ export default function SalesPackageProjectDetail() {
                   </div>
                 )}
 
-                {/* AI scoring banner */}
+                {/* H & I scoring banner */}
                 {projectId && totalPatents > 0 && aiScoredCount < totalPatents && (
                   <div className="flex items-center gap-4 bg-purple-50 border border-purple-200 rounded-lg px-4 py-3">
                     <Sparkles className="w-5 h-5 text-purple-600 shrink-0" />
@@ -802,6 +877,29 @@ export default function SalesPackageProjectDetail() {
                     >
                       {aiScoring ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
                       Score All with AI
+                    </Button>
+                  </div>
+                )}
+
+                {/* Group A classification banner */}
+                {projectId && totalPatents > 0 && pctAComplete < 100 && (
+                  <div className="flex items-center gap-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+                    <Sparkles className="w-5 h-5 text-blue-600 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-blue-800">
+                        Technology domains unclassified
+                        <span className="ml-2 text-blue-600 font-normal">· {pctAComplete.toFixed(0)}% complete</span>
+                      </p>
+                      <p className="text-xs text-blue-600 mt-0.5">AI classifies domain, subcategory, stack layer, subsystem & use-case (Group A) from patent text + CPC codes</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={classifyAllGroupA}
+                      disabled={groupAScoring}
+                      className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+                    >
+                      {groupAScoring ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                      Classify All
                     </Button>
                   </div>
                 )}
@@ -905,9 +1003,15 @@ export default function SalesPackageProjectDetail() {
                               </td>
                               <td className="px-4 py-2 text-right" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-end gap-1">
-                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
+                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                    title="Classify technology domain (Group A)"
+                                    onClick={() => classifySingleGroupA(attr.patent_record_id)}>
+                                    <Sparkles className="w-3 h-3 mr-1" />A
+                                  </Button>
+                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                    title="Score quality attributes (Groups H & I)"
                                     onClick={() => scoreSingleWithAI(attr.patent_record_id)}>
-                                    <Sparkles className="w-3 h-3" />
+                                    <Sparkles className="w-3 h-3 mr-1" />H&I
                                   </Button>
                                   <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
                                     onClick={() => setEditingAttr(attr)}>
@@ -930,19 +1034,60 @@ export default function SalesPackageProjectDetail() {
                   </CardContent>
                 </Card>
 
-                {/* Bulk score selected */}
-                {selectedAttrIds.size > 0 && (
+                {/* Bulk score selected / live progress bar */}
+                {(selectedAttrIds.size > 0 || bulkProgress) && (
                   <div className="flex items-center gap-3 bg-neutral-900 text-white rounded-lg px-4 py-3">
-                    <span className="text-sm">{selectedAttrIds.size} patents selected</span>
-                    <Button size="sm" variant="secondary" className="ml-auto"
-                      onClick={async () => {
-                        if (!projectId) return;
-                        await analyticsApi.extractBundleAttributes(projectId, Array.from(selectedAttrIds));
-                        setSelectedAttrIds(new Set());
-                        await loadAttributes(0);
-                      }}>
-                      <Sparkles className="w-3 h-3 mr-1" /> AI Score Selected
-                    </Button>
+                    {bulkProgress ? (
+                      /* ── Live progress ── */
+                      <>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium truncate">{bulkProgress.label}</span>
+                            <span className="text-xs text-neutral-400 ml-3 shrink-0">
+                              {bulkProgress.done} / {bulkProgress.total}
+                            </span>
+                          </div>
+                          <div className="w-full bg-neutral-700 rounded-full h-1.5">
+                            <div
+                              className="bg-cyan-400 h-1.5 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.round((bulkProgress.done / bulkProgress.total) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0 text-cyan-400" />
+                      </>
+                    ) : (
+                      /* ── Selection actions ── */
+                      <>
+                        <span className="text-sm">{selectedAttrIds.size} patents selected</span>
+                        <div className="flex gap-2 ml-auto">
+                          <Button size="sm" variant="secondary"
+                            onClick={async () => {
+                              const ids = Array.from(selectedAttrIds);
+                              setSelectedAttrIds(new Set());
+                              await runBulkWithProgress(
+                                ids,
+                                'Classifying technology domains (Group A)',
+                                (id) => analyticsApi.classifyTechnology(projectId!, [id]),
+                              );
+                            }}>
+                            <Sparkles className="w-3 h-3 mr-1" /> Classify Tech (A)
+                          </Button>
+                          <Button size="sm" variant="secondary"
+                            onClick={async () => {
+                              const ids = Array.from(selectedAttrIds);
+                              setSelectedAttrIds(new Set());
+                              await runBulkWithProgress(
+                                ids,
+                                'Scoring H&I quality attributes',
+                                (id) => analyticsApi.extractBundleAttributes(projectId!, [id], HI_FIELDS),
+                              );
+                            }}>
+                            <Sparkles className="w-3 h-3 mr-1" /> Score Quality (H&I)
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </TabsContent>
@@ -2380,11 +2525,13 @@ export default function SalesPackageProjectDetail() {
                   {patentDetailTab === 'attributes' && (<>
                   {/* Group A */}
                   <div>
-                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">A — Technology Classification</p>
+                    <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">A — Technology Classification (4 levels)</p>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                       {[
-                        { label: 'Primary Domain', val: viewingAttr.a1_primary_domain },
-                        { label: 'Tech Subcategory', val: viewingAttr.a2_tech_subcategory },
+                        { label: 'L1 Domain', val: viewingAttr.a1_primary_domain },
+                        { label: 'L2 Subcategory', val: viewingAttr.a2_tech_subcategory },
+                        { label: 'L3 Technique', val: viewingAttr.a21_tech_detail },
+                        { label: 'L4 Niche', val: viewingAttr.a22_tech_niche },
                         { label: 'Stack Layer', val: viewingAttr.a3_stack_layer },
                         { label: 'Subsystem', val: viewingAttr.a4_subsystem },
                         { label: 'Use Case', val: viewingAttr.a5_use_case },
@@ -2586,8 +2733,10 @@ export default function SalesPackageProjectDetail() {
                   <p className="font-semibold text-neutral-700 mb-2">Group A — Technology Classification</p>
                   <div className="grid grid-cols-2 gap-3">
                     {[
-                      { key: 'a1_primary_domain', label: 'Primary Domain' },
-                      { key: 'a2_tech_subcategory', label: 'Tech Subcategory' },
+                      { key: 'a1_primary_domain', label: 'L1 Domain' },
+                      { key: 'a2_tech_subcategory', label: 'L2 Subcategory' },
+                      { key: 'a21_tech_detail', label: 'L3 Technique' },
+                      { key: 'a22_tech_niche', label: 'L4 Niche' },
                       { key: 'a4_subsystem', label: 'Subsystem' },
                       { key: 'a5_use_case', label: 'Use Case' },
                     ].map(f => (

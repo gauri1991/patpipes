@@ -103,9 +103,12 @@ function CollapsibleSection({
 // Model selector & cost info
 // ---------------------------------------------------------------------------
 
+// Cost estimates assume sequential execution (max_workers=1) on Tier 1.
+// Tier upgrades enable parallel execution → analysis runs ~3-4× faster at same cost.
 const MODEL_INFO: Record<AnalysisModelKey, { label: string; cost: string; time: string }> = {
-  sonnet: { label: 'Sonnet 4.6 (Balanced)', cost: '$0.22–0.74', time: '~15–30s' },
-  opus: { label: 'Opus 4.6 (Best)', cost: '$0.37–1.23', time: '~20–45s' },
+  haiku:  { label: 'Haiku 4.5 (Fast & Cheap)',   cost: '$0.07–0.25',  time: '~60–120s' },
+  sonnet: { label: 'Sonnet 4.6 (Balanced)',      cost: '$0.22–0.74',  time: '~90–180s' },
+  opus:   { label: 'Opus 4.6 (Highest Quality)', cost: '$0.12–0.41',  time: '~120–240s' },
 };
 
 const CATEGORY_INFO: Record<AnalysisCategoryKey, string> = {

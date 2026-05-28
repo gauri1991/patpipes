@@ -517,9 +517,10 @@ class PatentRecord(models.Model):
     legal_status = models.TextField(blank=True, null=True, default='')
     
     # Technical fields
+    description = models.TextField(blank=True, help_text="Full patent specification / detailed description text")
     claims = models.TextField(blank=True, help_text="Full text of patent claims")
     claims_structure = models.JSONField(
-        default=list, 
+        default=list,
         help_text="Parsed claims with type and dependencies: [{'number': '1', 'text': '...', 'type': 'independent', 'references': []}]"
     )
     independent_claims_count = models.IntegerField(default=0, help_text="Number of independent claims")
@@ -2501,9 +2502,61 @@ class LLMProviderConfig(models.Model):
         ('mistral', 'Mistral AI'),
     ]
 
+    # Known models per provider — used in admin help text and validation.
+    # Leaving model_name blank uses the default for that provider.
+    # Sourced from https://docs.anthropic.com/en/docs/about-claude/models/
+    MODELS_BY_PROVIDER = {
+        'anthropic': [
+            # Current models (Claude 4.x family)
+            ('claude-opus-4-8',           'Claude Opus 4.8  — $5/$25 MTok  — best coding & agentic tasks'),
+            ('claude-opus-4-7',           'Claude Opus 4.7  — $5/$25 MTok'),
+            ('claude-opus-4-6',           'Claude Opus 4.6  — $5/$25 MTok'),
+            ('claude-opus-4-5',           'Claude Opus 4.5  — $5/$25 MTok'),
+            ('claude-sonnet-4-6',         'Claude Sonnet 4.6 — $3/$15 MTok — recommended balance'),
+            ('claude-sonnet-4-5',         'Claude Sonnet 4.5 — $3/$15 MTok'),
+            ('claude-haiku-4-5-20251001', 'Claude Haiku 4.5  — $1/$5 MTok  — fastest, cheapest'),
+            # Legacy (higher cost)
+            ('claude-opus-4-1',           'Claude Opus 4.1  — $15/$75 MTok — legacy'),
+        ],
+        'openai': [
+            ('gpt-4o',       'GPT-4o — flagship multimodal  — $2.50/$10 MTok'),
+            ('gpt-4o-mini',  'GPT-4o Mini — fast & cheap    — $0.15/$0.60 MTok'),
+            ('o3',           'o3 — advanced reasoning        — $2/$8 MTok'),
+            ('o4-mini',      'o4-mini — fast reasoning       — $1.10/$4.40 MTok'),
+        ],
+        'google': [
+            ('gemini-2.5-pro',   'Gemini 2.5 Pro   — most capable'),
+            ('gemini-2.5-flash', 'Gemini 2.5 Flash — fast & cheap'),
+            ('gemini-2.0-flash', 'Gemini 2.0 Flash — stable'),
+        ],
+        'mistral': [
+            ('mistral-large-latest',  'Mistral Large  — most capable'),
+            ('mistral-small-latest',  'Mistral Small  — fast & cheap'),
+        ],
+        'cohere': [
+            ('command-r-plus', 'Command R+ — best quality'),
+            ('command-r',      'Command R  — fast'),
+        ],
+    }
+
+    # Default model used when model_name is blank
+    DEFAULT_MODEL = {
+        'anthropic': 'claude-sonnet-4-6',
+        'openai':    'gpt-4o',
+        'google':    'gemini-2.5-flash',
+        'mistral':   'mistral-large-latest',
+        'cohere':    'command-r-plus',
+    }
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, unique=True)
     display_name = models.CharField(max_length=100)
+    model_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Leave blank to use the provider default. See MODELS_BY_PROVIDER for valid values.',
+    )
     api_key = models.CharField(max_length=500)
     api_base_url = models.CharField(max_length=500, blank=True, default='')
     is_active = models.BooleanField(default=True)
@@ -2524,18 +2577,22 @@ class LLMProviderConfig(models.Model):
         ordering = ['provider']
 
     def __str__(self):
-        return f"{self.display_name} ({'active' if self.is_active else 'inactive'})"
+        model = self.resolved_model
+        return f"{self.display_name} / {model} ({'active' if self.is_active else 'inactive'})"
+
+    @property
+    def resolved_model(self) -> str:
+        """Return the configured model name, or the provider default if blank."""
+        return self.model_name or self.DEFAULT_MODEL.get(self.provider, '')
 
     @property
     def masked_key(self):
-        """Return masked API key for display: first 4 + ... + last 4."""
         if not self.api_key or len(self.api_key) < 10:
             return '***'
         return f"{self.api_key[:4]}{'*' * 8}{self.api_key[-4:]}"
 
     @classmethod
     def get_key(cls, provider: str) -> str | None:
-        """Get the active API key for a provider. Returns None if not found/inactive."""
         try:
             config = cls.objects.get(provider=provider, is_active=True)
             return config.api_key
@@ -2657,9 +2714,15 @@ class PatentBundleAttributes(models.Model):
         'PatentRecord', on_delete=models.CASCADE, related_name='bundle_attributes'
     )
 
-    # ── Group A: Technology Classification ──────────────────────────────────
+    # ── Group A: Technology Classification (4-level hierarchy) ──────────────
+    # L1: broad domain (must match GlobalTechnologyArea taxonomy)
     a1_primary_domain = models.CharField(max_length=200, blank=True)
+    # L2: subcategory within domain (free-form)
     a2_tech_subcategory = models.CharField(max_length=200, blank=True)
+    # L3: specific technique — derived primarily from claim language
+    a21_tech_detail = models.CharField(max_length=200, blank=True)
+    # L4: most granular approach/algorithm/protocol — derived primarily from claim language
+    a22_tech_niche = models.CharField(max_length=200, blank=True)
     a3_stack_layer = models.CharField(
         max_length=50, blank=True,
         choices=[('App','App'),('Middleware','Middleware'),('Cloud','Cloud'),

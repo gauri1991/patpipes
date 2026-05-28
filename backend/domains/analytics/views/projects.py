@@ -1158,6 +1158,29 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
         task = run_bulk_attribute_extraction_task.delay(str(project.id), patent_record_ids, fields)
         return Response({'task_id': task.id, 'status': 'queued'}, status=status.HTTP_202_ACCEPTED)
 
+    @action(detail=True, methods=['post'], url_path='classify_technology')
+    def classify_technology(self, request, pk=None):
+        """AI-classify Group A (technology) fields for one or all patents in the project."""
+        from ..tasks import run_technology_classification_task
+        from ..bundle_attribute_service import classify_group_a_via_llm
+        from ..models import PatentDataset, PatentRecord
+
+        project = self.get_object()
+        patent_record_ids = request.data.get('patent_record_ids')
+        force = bool(request.data.get('force', False))
+
+        # Single patent → run synchronously
+        if patent_record_ids and len(patent_record_ids) == 1:
+            try:
+                result = classify_group_a_via_llm(patent_record_ids[0], force=force)
+                return Response({'status': 'completed', 'classified_count': 1 if result else 0, 'result': result})
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Bulk → Celery
+        task = run_technology_classification_task.delay(str(project.id), patent_record_ids, force)
+        return Response({'task_id': task.id, 'status': 'queued'}, status=status.HTTP_202_ACCEPTED)
+
     @action(detail=True, methods=['get', 'patch'])
     def bundle_attributes(self, request, pk=None):
         """GET all PatentBundleAttributes for project patents. PATCH to update a patent's attributes."""
@@ -1718,7 +1741,7 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
 
         Body: { package_id: str, pattern_override: 'A'|'B'|'C'|'D'|null }
         """
-        from ..models import PatentBundleAttributes
+        from ..models import PatentBundleAttributes, PatentDataset
         from ..narrative_service import generate_value_proposition
 
         project = self.get_object()
@@ -1752,12 +1775,17 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
                         selected_patent_ids.add(patent_ids_in_matrix[row_idx])
 
         # Load top patent attributes (cap at 20 for prompt size)
-        attributes_qs = PatentBundleAttributes.objects.filter(
-            project=project,
-            patent_record_id__in=list(selected_patent_ids)[:20],
-        ).values() if selected_patent_ids else PatentBundleAttributes.objects.filter(
-            project=project
-        ).values()[:20]
+        # PatentBundleAttributes links to PatentRecord → Dataset → Project (no direct project FK)
+        dataset_ids = list(PatentDataset.objects.filter(project=project).values_list('id', flat=True))
+        base_qs = PatentBundleAttributes.objects.filter(
+            patent_record__dataset_id__in=dataset_ids
+        )
+        if selected_patent_ids:
+            attributes_qs = base_qs.filter(
+                patent_record_id__in=list(selected_patent_ids)[:20]
+            ).values()
+        else:
+            attributes_qs = base_qs.values()[:20]
 
         patent_attributes = list(attributes_qs)
 
@@ -1817,7 +1845,7 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
 
         Body: { package_id: str }
         """
-        from ..models import PatentBundleAttributes
+        from ..models import PatentBundleAttributes, PatentDataset
         from ..narrative_service import generate_deck as _generate_deck
 
         project = self.get_object()
@@ -1841,12 +1869,12 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
                     if row[col_idx]:
                         selected_patent_ids.add(patent_ids_in_matrix[row_idx])
 
-        attributes_qs = PatentBundleAttributes.objects.filter(
-            project=project,
-            patent_record_id__in=list(selected_patent_ids)[:20],
-        ).values() if selected_patent_ids else PatentBundleAttributes.objects.filter(
-            project=project
-        ).values()[:20]
+        dataset_ids = list(PatentDataset.objects.filter(project=project).values_list('id', flat=True))
+        base_qs = PatentBundleAttributes.objects.filter(patent_record__dataset_id__in=dataset_ids)
+        if selected_patent_ids:
+            attributes_qs = base_qs.filter(patent_record_id__in=list(selected_patent_ids)[:20]).values()
+        else:
+            attributes_qs = base_qs.values()[:20]
 
         patent_attributes = list(attributes_qs)
         bundle_data = {
@@ -1871,7 +1899,7 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
 
         Body: { package_id: str }
         """
-        from ..models import PatentBundleAttributes
+        from ..models import PatentBundleAttributes, PatentDataset
         from ..narrative_service import generate_cim as _generate_cim
 
         project = self.get_object()
@@ -1895,12 +1923,12 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
                     if row[col_idx]:
                         selected_patent_ids.add(patent_ids_in_matrix[row_idx])
 
-        attributes_qs = PatentBundleAttributes.objects.filter(
-            project=project,
-            patent_record_id__in=list(selected_patent_ids)[:20],
-        ).values() if selected_patent_ids else PatentBundleAttributes.objects.filter(
-            project=project
-        ).values()[:20]
+        dataset_ids = list(PatentDataset.objects.filter(project=project).values_list('id', flat=True))
+        base_qs = PatentBundleAttributes.objects.filter(patent_record__dataset_id__in=dataset_ids)
+        if selected_patent_ids:
+            attributes_qs = base_qs.filter(patent_record_id__in=list(selected_patent_ids)[:20]).values()
+        else:
+            attributes_qs = base_qs.values()[:20]
 
         patent_attributes = list(attributes_qs)
         bundle_data = {

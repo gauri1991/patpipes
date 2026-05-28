@@ -41,7 +41,7 @@ _LLM_EXTRACTABLE: Dict[str, dict] = {
     'h1_claim_strength':            {'type': 'int',    'min': 0, 'max': 3},
     'h4_divided_infringement_risk': {'type': 'int',    'min': 0, 'max': 3},
     # Group I — Market Signals (AI-scoreable subset)
-    'i2_implementation_maturity':   {'type': 'choice', 'choices': ['Idea-only', 'Prototyped', 'Productized']},
+    'i2_implementation_maturity':   {'type': 'choice', 'choices': ['Concept', 'Prototype', 'Productized', 'Commercial', 'Ubiquitous']},
     'i3_adjacent_market_reread':    {'type': 'int',    'min': 0, 'max': 3},
     'i4_workaround_complexity':     {'type': 'int',    'min': 0, 'max': 3},
     # Group A — stack layer (bonus fill if not already classified)
@@ -52,11 +52,14 @@ _LLM_EXTRACTABLE: Dict[str, dict] = {
 def extract_bundle_attributes_via_llm(
     patent_record_id: str,
     fields_to_extract: Optional[List[str]] = None,
+    cpc_cache: Optional[Dict[str, str]] = None,
 ) -> Dict:
     """
     Use LLM to infer attribute scores from a patent's structured inputs.
     Returns dict of {field_name: value} for successfully extracted fields.
     Updates PatentBundleAttributes, ai_extracted_fields, and ai_confidence_scores.
+
+    cpc_cache: optional pre-loaded dict {cpc_code: title} to avoid per-patent DB queries in bulk runs.
     """
     from .models import PatentRecord, PatentBundleAttributes
 
@@ -74,10 +77,11 @@ def extract_bundle_attributes_via_llm(
     if not target_fields:
         return {}
 
-    inputs = _build_patent_inputs(pr)
-    prompt = _build_extraction_prompt(inputs, target_fields)
+    inputs = _build_patent_inputs(pr, cpc_cache=cpc_cache)
+    system_text = _build_system_prompt()
+    user_text = _build_user_prompt(inputs, target_fields=target_fields)
 
-    raw_response = _call_llm(prompt)
+    raw_response = _call_llm(system_text, user_text)
     if not raw_response:
         logger.warning('LLM returned no response for patent %s', patent_record_id)
         return {}
@@ -134,60 +138,97 @@ def update_attributes_manually(
 # Patent input preparation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_patent_inputs(pr) -> dict:
+def _build_patent_inputs(pr, cpc_cache: Optional[Dict[str, str]] = None) -> dict:
     """
     Build a structured dict of named patent inputs for the LLM prompt.
-    Extracts structured fields rather than a single text blob.
+
+    cpc_cache: pre-loaded {code: title} dict. If None, a per-patent DB query is made.
     """
     title = pr.title or 'Untitled'
-    abstract = (pr.abstract or '')[:1000]
+    abstract = (pr.abstract or '')[:2000]
 
-    # Parse claims into independent vs. dependent
-    ind_claim_1 = ''
-    ind_claim_others_parts = []
-    raw_claims = pr.claims or []
-    if isinstance(raw_claims, list):
-        ind_count = 0
-        for claim in raw_claims[:20]:
-            text = _claim_text(claim)
-            if not text:
-                continue
-            # Dependent claims reference another claim number
-            if re.search(r'\bclaim\s+\d', text, re.IGNORECASE):
-                continue  # skip dependent claims
-            ind_count += 1
-            if ind_count == 1:
-                ind_claim_1 = text[:800]
-            else:
-                ind_claim_others_parts.append(text[:400])
-    elif isinstance(raw_claims, str) and raw_claims.strip():
-        # Fallback: use first 800 chars
-        ind_claim_1 = raw_claims[:800]
+    # Independent vs dependent claims — prefer the pre-parsed claims_structure (reliable),
+    # fall back to regex-parsing the raw claims text/list (works but less accurate).
+    independent_block, dependent_block = _build_claims_blocks(pr)
 
-    ind_claim_others = ('\n'.join(ind_claim_others_parts))[:600] or 'none'
-
-    # Background / field of invention
+    # Background / field of invention — pulled from the patent specification.
+    # If the description has a "BACKGROUND" / "FIELD OF THE INVENTION" header,
+    # use that section; otherwise use the first 1500 chars as a fallback.
     background = ''
-    for attr in ('description', 'background', 'field_of_invention'):
-        val = getattr(pr, attr, None)
-        if val:
-            background = str(val)[:800]
-            break
+    full_desc = getattr(pr, 'description', '') or ''
+    if full_desc:
+        m = re.search(
+            r'(?i)(?:BACKGROUND(?:\s+OF\s+THE\s+INVENTION)?|FIELD\s+OF\s+(?:THE\s+)?INVENTION)\b',
+            full_desc,
+        )
+        if m:
+            # Take from this header through the next major header (SUMMARY, DETAILED, etc.)
+            start = m.start()
+            tail = re.search(
+                r'(?i)\n\s*(?:SUMMARY|DETAILED\s+DESCRIPTION|BRIEF\s+DESCRIPTION\s+OF\s+(?:THE\s+)?DRAWINGS)\b',
+                full_desc[start:],
+            )
+            end = (start + tail.start()) if tail else start + 1500
+            background = full_desc[start:end][:1500].strip()
+        else:
+            background = full_desc[:1500].strip()
 
-    # CPC codes
-    cpc_raw = getattr(pr, 'cpc_classification', '') or ''
-    cpc_parts = [c.strip() for c in str(cpc_raw).replace(';', ',').split(',') if c.strip()]
-    cpc_primary = cpc_parts[0] if cpc_parts else 'unknown'
-    cpc_others = ', '.join(cpc_parts[1:]) if len(cpc_parts) > 1 else 'unknown'
+    # Classification codes — handle comma, semicolon, and pipe separators
+    def _split_codes(raw_value) -> list:
+        return [
+            c.strip()
+            for c in str(raw_value or '').replace(';', ',').replace('|', ',').split(',')
+            if c.strip()
+        ]
+
+    cpc_parts  = _split_codes(getattr(pr, 'cpc_classification', ''))
+    ipc_parts  = _split_codes(getattr(pr, 'ipc_classification', ''))
+    uspc_parts = _split_codes(getattr(pr, 'uspc_classification', ''))
+
+    # Resolve CPC + IPC titles from ClassificationDefinition table.
+    # USPC codes use the form "726/1" — the parent class title is loaded under the IPC system in our DB.
+    all_codes = cpc_parts + ipc_parts
+    if all_codes:
+        if cpc_cache is not None:
+            code_titles = {c: cpc_cache[c] for c in all_codes if c in cpc_cache}
+        else:
+            try:
+                from domains.patents.models import ClassificationDefinition
+                code_titles = {
+                    d['code']: d['title']
+                    for d in ClassificationDefinition.objects.filter(
+                        code__in=all_codes
+                    ).values('code', 'title')
+                }
+            except Exception:
+                code_titles = {}
+    else:
+        code_titles = {}
+
+    def _format_with_titles(parts: list) -> str:
+        if not parts:
+            return 'unknown'
+        return '; '.join(
+            f"{c} — {code_titles[c]}" if c in code_titles else c
+            for c in parts
+        )
+
+    cpc_primary      = cpc_parts[0] if cpc_parts else 'unknown'
+    cpc_primary_desc = code_titles.get(cpc_primary, '')
+    cpc_full         = _format_with_titles(cpc_parts)
+    ipc_full         = _format_with_titles(ipc_parts)
+    uspc_full        = '; '.join(uspc_parts) if uspc_parts else 'unknown'
 
     return {
         'title': title,
         'abstract': abstract,
-        'independent_claim_1': ind_claim_1 or 'not available',
-        'independent_claim_others': ind_claim_others,
+        'independent_claims': independent_block,
+        'dependent_claims': dependent_block,
         'background_or_field': background or 'not available',
-        'cpc_primary': cpc_primary,
-        'cpc_others': cpc_others,
+        # Unified classification keys (with human-readable titles)
+        'cpc_full': cpc_full,
+        'ipc_full': ipc_full,
+        'uspc_full': uspc_full,
     }
 
 
@@ -202,6 +243,118 @@ def _claim_text(claim) -> str:
     # Strip leading "N. " numbering
     text = re.sub(r'^\s*\d+\.\s*', '', text.strip())
     return text.strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Claims structure → prompt blocks
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Per-claim character caps to keep total prompt size reasonable
+_IND_CLAIM_CAP = 2500     # per independent claim
+_DEP_CLAIM_CAP = 800      # per dependent claim
+_IND_BLOCK_CAP = 5000     # total cap on independent block
+_DEP_BLOCK_CAP = 6000     # total cap on dependent block
+
+
+def _classify_claim_strict(text: str) -> tuple[str, list[str]]:
+    """Detect dependent claims robustly — including source-data typos
+    (e.g. 'The system of 1, wherein' missing the word 'claim').
+    """
+    head = text[:200]
+    for pat in (
+        r'\bof\s+claim\s+(\d+)\b',
+        r'\baccording\s+to\s+claim\s+(\d+)\b',
+        r'\bas\s+(?:in|recited\s+in)\s+claim\s+(\d+)\b',
+        r'\bclaim\s+(\d+)\b',
+        r'^\s*\d+\.\s*The\s+\w+\s+of\s+(\d+)[,\s]',
+        r'^\s*\d+\.\s*The\s+\w+\s+according\s+to\s+(\d+)[,\s]',
+    ):
+        m = re.search(pat, head, re.I | re.M)
+        if m:
+            refs = re.findall(pat, text, re.I | re.M)
+            return 'dependent', list(dict.fromkeys(refs))
+    refs = re.findall(r'\bclaim\s+(\d+)\b', text, re.I)
+    if refs:
+        return 'dependent', list(dict.fromkeys(refs))
+    return 'independent', []
+
+
+def _build_claims_blocks(pr) -> tuple[str, str]:
+    """Return (independent_block, dependent_block) ready to drop into the prompt.
+
+    Format:
+      Independent block — each claim prefixed with its number:
+        Claim 1: A system, comprising...
+        Claim 18: A method, comprising...
+
+      Dependent block — number + parent reference + text:
+        Claim 6 (depends on 1): wherein the classifier is a Random Forest model.
+        Claim 9 (depends on 8): wherein the certificates are obtained from a certificate log.
+
+    Falls back to the raw text blob if claims_structure is missing.
+    """
+    structure = getattr(pr, 'claims_structure', None) or []
+
+    # Path 1: structured claims_structure (preferred)
+    if structure:
+        ind_lines, dep_lines, ind_used, dep_used = [], [], 0, 0
+        for c in structure:
+            num = str(c.get('number', '?'))
+            text = str(c.get('text', '')).strip()
+            if not text:
+                continue
+            ctype = c.get('type') or _classify_claim_strict(text)[0]
+            refs = c.get('references') or []
+            if ctype == 'independent':
+                snippet = text[:_IND_CLAIM_CAP]
+                line = f'Claim {num}: {snippet}'
+                if ind_used + len(line) > _IND_BLOCK_CAP:
+                    break
+                ind_lines.append(line)
+                ind_used += len(line)
+            else:
+                snippet = text[:_DEP_CLAIM_CAP]
+                refs_str = f' (depends on {", ".join(refs)})' if refs else ''
+                line = f'Claim {num}{refs_str}: {snippet}'
+                if dep_used + len(line) > _DEP_BLOCK_CAP:
+                    continue
+                dep_lines.append(line)
+                dep_used += len(line)
+
+        ind_block = '\n\n'.join(ind_lines) if ind_lines else 'not available'
+        dep_block = '\n\n'.join(dep_lines) if dep_lines else 'none'
+        return ind_block, dep_block
+
+    # Path 2: legacy list-of-dicts (older imports)
+    raw_claims = pr.claims
+    if isinstance(raw_claims, list) and raw_claims:
+        ind_lines, dep_lines, ind_used, dep_used = [], [], 0, 0
+        for c in raw_claims[:30]:
+            text = _claim_text(c)
+            num = str(c.get('number', '?')) if isinstance(c, dict) else '?'
+            if not text:
+                continue
+            full = f'{num}. {text}' if not text.startswith(f'{num}.') else text
+            ctype, refs = _classify_claim_strict(full)
+            if ctype == 'independent':
+                line = f'Claim {num}: {text[:_IND_CLAIM_CAP]}'
+                if ind_used + len(line) > _IND_BLOCK_CAP:
+                    break
+                ind_lines.append(line); ind_used += len(line)
+            else:
+                refs_str = f' (depends on {", ".join(refs)})' if refs else ''
+                line = f'Claim {num}{refs_str}: {text[:_DEP_CLAIM_CAP]}'
+                if dep_used + len(line) > _DEP_BLOCK_CAP:
+                    continue
+                dep_lines.append(line); dep_used += len(line)
+        return ('\n\n'.join(ind_lines) or 'not available',
+                '\n\n'.join(dep_lines) or 'none')
+
+    # Path 3: plain string blob — emit it as a single independent block, no separation possible
+    if isinstance(raw_claims, str) and raw_claims.strip():
+        return raw_claims[:_IND_BLOCK_CAP], 'none (raw text blob — independent/dependent not separated)'
+
+    return 'not available', 'none'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -326,10 +479,12 @@ _FIELD_DESCRIPTIONS = {
     ),
     # Group I
     'i2_implementation_maturity': (
-        'Implementation maturity — exactly one of: "Idea-only", "Prototyped", "Productized".\n'
-        '  Idea-only: Specification describes a concept with no working example, no experimental data.\n'
-        '  Prototyped: Specification references a working prototype, lab demo, or research publication.\n'
-        '  Productized: Specification names a commercial product, or there is strong evidence one exists.'
+        'Implementation maturity — exactly one of: "Concept", "Prototype", "Productized", "Commercial", "Ubiquitous".\n'
+        '  Concept:    Specification describes an idea only — no working example, no experimental data.\n'
+        '  Prototype:  Specification references a working prototype, lab demo, or research publication.\n'
+        '  Productized: Specification names a commercial product, or there is strong evidence one exists.\n'
+        '  Commercial: Technology widely deployed commercially (multiple vendors ship it).\n'
+        '  Ubiquitous: Technology is universal infrastructure — everyone uses it without thinking about it.'
     ),
     'i3_adjacent_market_reread': (
         'Adjacent-market re-read — integer 0-3.\n'
@@ -356,31 +511,78 @@ _FIELD_DESCRIPTIONS = {
 }
 
 
-def _build_extraction_prompt(inputs: dict, target_fields: List[str]) -> str:
-    fields_prompt = '\n\n'.join(
-        f'"{f}":\n{_FIELD_DESCRIPTIONS.get(f, f)}'
-        for f in target_fields
-    )
+_SYSTEM_PREAMBLE = (
+    "You are a senior patent analyst. Score the patent provided by the user on the specified "
+    "attributes. Follow the rubrics exactly. Return ONLY valid JSON — no prose, no markdown fences.\n\n"
+    "OUTPUT FORMAT: each attribute key maps to an object with three keys:\n"
+    '  "value"         — the scored value (integer, string, or choice as specified)\n'
+    '  "confidence"    — integer 0-100; your certainty in the score\n'
+    '  "justification" — one sentence explaining the score\n\n'
+    "RULES:\n"
+    "- Score conservatively. Confidence < 60 means flag for manual review.\n"
+    "- If you cannot determine a value, use 0, empty string, or the first valid choice. Set confidence < 50.\n"
+    "- Do not invent facts not present in the patent text.\n"
+)
 
-    try:
-        from .models import AnalysisPromptTemplate
-        tpl = AnalysisPromptTemplate.get_active('bundle_attribute_extraction')
-        template_text = tpl.prompt_text if tpl else _DEFAULT_EXTRACTION_TEMPLATE
-    except Exception:
-        template_text = _DEFAULT_EXTRACTION_TEMPLATE
+_USER_DATA_TEMPLATE = """\
+TITLE: {title}
+ABSTRACT: {abstract}
 
-    return template_text.format(
-        **inputs,
-        fields_prompt=fields_prompt,
-        field_count=len(target_fields),
-    )
+INDEPENDENT_CLAIMS (primary source for claim-structure attributes — C1, C2, H1, H4):
+{independent_claims}
+
+DEPENDENT_CLAIMS (supporting context — use to refine technique/algorithm details when independent claims are abstract):
+{dependent_claims}
+
+BACKGROUND_OR_FIELD: {background_or_field}
+CPC: {cpc_full}
+IPC: {ipc_full}
+USPC: {uspc_full}
+
+Score this patent on all attributes specified in your instructions. Return ONLY valid JSON."""
+
+
+# Module-level cached full system prompt — built once, reused for every call.
+# Always includes ALL field rubrics so the prompt is identical regardless of which
+# fields are being extracted. This guarantees the prompt exceeds the 1,024-token
+# minimum required for caching on Claude Sonnet 4.6 (measured: ~1,800 tokens).
+_CACHED_SYSTEM_PROMPT: Optional[str] = None
+
+
+def _build_system_prompt(target_fields: List[str] = None) -> str:  # noqa: ARG001
+    """Return the full static system prompt (all rubrics).
+
+    target_fields is intentionally ignored — including all rubrics keeps the
+    system prompt identical across every call, maximising Anthropic prompt cache
+    hits. The user message specifies which fields to actually extract.
+    """
+    global _CACHED_SYSTEM_PROMPT
+    if _CACHED_SYSTEM_PROMPT is None:
+        all_rubrics = '\n\n'.join(
+            f'"{f}":\n{desc}'
+            for f, desc in _FIELD_DESCRIPTIONS.items()
+        )
+        _CACHED_SYSTEM_PROMPT = (
+            _SYSTEM_PREAMBLE
+            + "ATTRIBUTE RUBRICS (score only the fields listed in the user message):\n\n"
+            + all_rubrics
+        )
+    return _CACHED_SYSTEM_PROMPT
+
+
+def _build_user_prompt(inputs: dict, target_fields: Optional[List[str]] = None) -> str:
+    """Build the per-patent user prompt: patent data + explicit field list to extract."""
+    text = _USER_DATA_TEMPLATE.format(**inputs)
+    if target_fields:
+        text += f"\n\nExtract ONLY these attributes: {', '.join(target_fields)}"
+    return text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM calls
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _call_llm(prompt: str) -> Optional[str]:
+def _call_llm(system_text: str, user_text: str) -> Optional[str]:
     try:
         from .models import LLMProviderConfig
         config = LLMProviderConfig.objects.filter(is_active=True).first()
@@ -389,38 +591,84 @@ def _call_llm(prompt: str) -> Optional[str]:
         api_key = config.api_key
         if not api_key:
             return None
+        model = config.resolved_model
         if config.provider == 'anthropic':
-            return _call_anthropic(api_key, prompt)
+            return _call_anthropic(api_key, system_text, user_text, model=model)
         elif config.provider == 'openai':
-            return _call_openai(api_key, prompt)
+            return _call_openai(api_key, system_text, user_text, model=model)
     except Exception as e:
         logger.warning('LLM call failed: %s', e)
     return None
 
 
-def _call_anthropic(api_key: str, prompt: str) -> Optional[str]:
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model='claude-sonnet-4-20250514',
-            max_tokens=2048,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        return response.content[0].text
-    except Exception as e:
-        logger.warning('Anthropic API call failed: %s', e)
-        return None
+def _call_anthropic(api_key: str, system_text: str, user_text: str, model: str = 'claude-sonnet-4-6') -> Optional[str]:
+    import anthropic
+    import time
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Retry on 429 (rate limit) with exponential back-off.
+    # Tier 1 output limit is 8,000 tokens/min — a 30 s pause is enough for
+    # the window to reset.  Max 3 retries = up to ~3.5 min total wait.
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                system=[{
+                    'type': 'text',
+                    'text': system_text,
+                    'cache_control': {'type': 'ephemeral'},
+                }],
+                messages=[{'role': 'user', 'content': user_text}],
+            )
+            usage = getattr(response, 'usage', None)
+            if usage:
+                cache_read = getattr(usage, 'cache_read_input_tokens', 0)
+                cache_write = getattr(usage, 'cache_creation_input_tokens', 0)
+                if cache_read:
+                    logger.debug('Cache HIT: %d read, %d written', cache_read, cache_write)
+                elif cache_write:
+                    logger.debug('Cache WRITE: %d tokens cached', cache_write)
+            return response.content[0].text
+
+        except anthropic.RateLimitError:
+            if attempt >= max_retries:
+                logger.error('Anthropic rate limit: exhausted %d retries', max_retries)
+                return None
+            wait = 30 * (2 ** attempt)   # 30 s, 60 s, 120 s
+            logger.warning('Anthropic rate limit hit (attempt %d/%d) — waiting %d s',
+                           attempt + 1, max_retries, wait)
+            time.sleep(wait)
+
+        except anthropic.APIStatusError as e:
+            if e.status_code == 529:  # API overloaded
+                wait = 15 * (2 ** attempt)
+                logger.warning('Anthropic overloaded — waiting %d s', wait)
+                time.sleep(wait)
+            else:
+                logger.warning('Anthropic API error %d: %s', e.status_code, str(e)[:200])
+                return None
+
+        except Exception as e:
+            logger.warning('Anthropic call failed: %s', e)
+            return None
+
+    return None
 
 
-def _call_openai(api_key: str, prompt: str) -> Optional[str]:
+def _call_openai(api_key: str, system_text: str, user_text: str, model: str = 'gpt-4o') -> Optional[str]:
     try:
         import openai
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model='gpt-4o',
-            max_tokens=2048,
-            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=4096,
+            messages=[
+                {'role': 'system', 'content': system_text},
+                {'role': 'user', 'content': user_text},
+            ],
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -519,19 +767,69 @@ def _validate_value(value, spec: dict):
 # Group A — Technology Classification (dedicated function, unchanged logic)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_GROUP_A_FIELDS = ['a1_primary_domain', 'a2_tech_subcategory', 'a3_stack_layer', 'a4_subsystem', 'a5_use_case']
+_GROUP_A_FIELDS = [
+    'a1_primary_domain', 'a2_tech_subcategory',
+    'a21_tech_detail', 'a22_tech_niche',        # L3 and L4 — claim-derived
+    'a3_stack_layer', 'a4_subsystem', 'a5_use_case',
+]
 
 _A3_CHOICES = ['Hardware', 'Firmware', 'OS', 'Middleware', 'App', 'Cloud', 'UI', '']
+
+# Fallback taxonomy when GlobalTechnologyArea DB table is empty.
+# Used both as a classification reference AND to push the Group A system prompt
+# past the 1,024-token minimum required for Anthropic prompt caching on Sonnet 4.6.
+_FALLBACK_TAXONOMY_LINES = """- Artificial Intelligence & Machine Learning (category: Software, IPC: G06N, CPC: G06N)
+- Cybersecurity & Network Security (category: Software, IPC: H04L, CPC: H04L63)
+- Cloud Computing & Infrastructure (category: Software, IPC: G06F, CPC: G06F9/50)
+- Semiconductors & Integrated Circuits (category: Hardware, IPC: H01L, CPC: H01L)
+- Wireless Communications 5G/6G (category: Telecom, IPC: H04W, CPC: H04W)
+- Internet of Things (category: Software, IPC: H04L, CPC: H04W4/70)
+- Autonomous Vehicles & ADAS (category: Automotive, IPC: B60W, CPC: B60W)
+- Medical Devices & Diagnostics (category: Healthcare, IPC: A61B, CPC: A61B)
+- Biotechnology & Genomics (category: Life Sciences, IPC: C12N, CPC: C12N)
+- Energy Storage & Batteries (category: Energy, IPC: H01M, CPC: H01M)
+- Quantum Computing (category: Computing, IPC: G06N10, CPC: G06N10)
+- Augmented Reality & Virtual Reality (category: Software, IPC: G02B, CPC: G02B27/01)
+- Blockchain & Distributed Ledger (category: Software, IPC: G06F, CPC: G06F21/64)
+- Robotics & Automation (category: Manufacturing, IPC: B25J, CPC: B25J)
+- Natural Language Processing (category: Software, IPC: G06F40, CPC: G06F40)
+- Computer Vision & Image Processing (category: Software, IPC: G06V, CPC: G06V)
+- Data Analytics & Business Intelligence (category: Software, IPC: G06F17, CPC: G06F16)
+- Networking & Telecommunications (category: Telecom, IPC: H04L, CPC: H04L)
+- Consumer Electronics (category: Hardware, IPC: H04N, CPC: H04N)
+- Industrial Manufacturing & Process Control (category: Manufacturing, IPC: G05B, CPC: G05B)
+- Financial Technology (category: Software, IPC: G06Q20, CPC: G06Q20)
+- Healthcare IT & Digital Health (category: Healthcare, IPC: G16H, CPC: G16H)
+- Environmental & Clean Technology (category: Energy, IPC: F03D, CPC: Y02E)
+- Aerospace & Defense Systems (category: Defense, IPC: B64C, CPC: B64C)
+- Display Technology (category: Hardware, IPC: G09G, CPC: G09G)
+- Audio & Speech Processing (category: Software, IPC: G10L, CPC: G10L)
+- Optical & Photonics (category: Hardware, IPC: G02, CPC: G02)
+- Power Electronics & Energy Conversion (category: Energy, IPC: H02M, CPC: H02M)
+- Software Development Tools & Platforms (category: Software, IPC: G06F8, CPC: G06F8)
+- E-Commerce & Digital Platforms (category: Software, IPC: G06Q30, CPC: G06Q30)
+- Wearables & Body-Area Networks (category: Hardware, IPC: A61B5, CPC: A61B5)
+- Smart Grid & Power Management (category: Energy, IPC: H02J, CPC: H02J)
+- Sensor Technology & MEMS (category: Hardware, IPC: G01, CPC: G01)
+- Human-Computer Interaction (category: Software, IPC: G06F3, CPC: G06F3)
+- Supply Chain & Logistics (category: Software, IPC: G06Q10, CPC: G06Q10)
+- Additive Manufacturing & 3D Printing (category: Manufacturing, IPC: B29C64, CPC: B29C64)
+- Haptics & Tactile Interfaces (category: Hardware, IPC: G06F3/01, CPC: G06F3/01)
+- Geolocation & Mapping Systems (category: Software, IPC: G01C, CPC: G01C)
+- Content Delivery & Streaming (category: Software, IPC: H04N21, CPC: H04N21)"""
 
 
 def classify_group_a_via_llm(
     patent_record_id: str,
     force: bool = False,
+    cpc_cache: Optional[Dict[str, str]] = None,
 ) -> Dict:
     """
     Classify a patent's Group A technology fields using the GlobalTechnologyArea taxonomy as reference.
     Skips if all A fields are already filled unless force=True.
     Returns dict of {field_name: value} for updated fields.
+
+    cpc_cache: optional pre-loaded {cpc_code: title} dict for bulk runs.
     """
     from .models import PatentRecord, PatentBundleAttributes, GlobalTechnologyArea
     from django.utils import timezone
@@ -560,49 +858,62 @@ def classify_group_a_via_llm(
             for t in taxonomy
         )
     else:
-        taxonomy_lines = '(no taxonomy defined — use your best judgment)'
+        # Use built-in fallback so the LLM always has concrete domain names to choose from
+        taxonomy_lines = _FALLBACK_TAXONOMY_LINES
 
-    inputs = _build_patent_inputs(pr)
-    ipc_codes = getattr(pr, 'ipc_classification', '') or ''
+    inputs = _build_patent_inputs(pr, cpc_cache=cpc_cache)
 
-    _default_group_a_template = """\
-You are a patent technology analyst. Classify the following patent using the provided taxonomy.
-
-PATENT:
-TITLE: {title}
-ABSTRACT: {abstract}
-INDEPENDENT_CLAIM_1: {independent_claim_1}
-
-IPC Codes: {ipc_codes}
-CPC Codes: {cpc_primary}
-
-TAXONOMY (choose a1_primary_domain from these names exactly):
-{taxonomy_lines}
-
-TASK: Return a JSON object with these 5 fields:
-- "a1_primary_domain": The primary technology domain name — must exactly match a name from the taxonomy list above
-- "a2_tech_subcategory": A specific subcategory within that domain (2-4 words, can be free-form)
-- "a3_stack_layer": One of: Hardware, Firmware, OS, Middleware, App, Cloud, UI, or "" if not applicable
-- "a4_subsystem": The specific subsystem or component this patent targets (2-5 words, free-form)
-- "a5_use_case": The primary use case as a customer-facing problem (5-10 words, free-form)
-
-Return ONLY valid JSON, no explanation:
-{{"a1_primary_domain": "...", "a2_tech_subcategory": "...", "a3_stack_layer": "...", "a4_subsystem": "...", "a5_use_case": "..."}}"""
-
-    try:
-        from .models import AnalysisPromptTemplate
-        tpl = AnalysisPromptTemplate.get_active('group_a_classification')
-        template_text = tpl.prompt_text if tpl else _default_group_a_template
-    except Exception:
-        template_text = _default_group_a_template
-
-    prompt = template_text.format(
-        **inputs,
-        ipc_codes=ipc_codes,
-        taxonomy_lines=taxonomy_lines,
+    # Static system instructions — taxonomy included so prompt is identical across
+    # patents in one bulk run, enabling Anthropic prompt cache hits.
+    group_a_system = (
+        "You are a patent technology analyst. Classify patents using the structured 4-level taxonomy below.\n\n"
+        "OUTPUT: Return ONLY valid JSON with exactly 7 keys:\n"
+        '  "a1_primary_domain"  — Level 1: must exactly match a name from the TAXONOMY list\n'
+        '  "a2_tech_subcategory"— Level 2: subcategory within domain (2-4 words, free-form)\n'
+        '  "a21_tech_detail"    — Level 3: specific technique or method, derived primarily from the CLAIM language\n'
+        '                          (2-5 words, free-form; must be a child of a2_tech_subcategory)\n'
+        '  "a22_tech_niche"     — Level 4: most granular approach, algorithm, or protocol,\n'
+        '                          derived primarily from the CLAIM language (2-6 words, free-form;\n'
+        '                          must be a child of a21_tech_detail)\n'
+        '  "a3_stack_layer"     — exactly one of: Hardware, Firmware, OS, Middleware, App, Cloud, UI, or ""\n'
+        '    Hardware=physical device/circuit/material; Firmware=low-level embedded code; OS=kernel/driver;\n'
+        '    Middleware=protocol stacks/libraries; App=end-user application logic;\n'
+        '    Cloud=server-side service/infrastructure; UI=visual/voice interface.\n'
+        '  "a4_subsystem"       — specific subsystem or component (2-5 words, free-form)\n'
+        '  "a5_use_case"        — primary customer-facing problem statement (5-10 words, free-form)\n\n'
+        "HIERARCHY: a1 → a2 → a21 → a22  (each level is more specific than its parent)\n"
+        'EXAMPLE: "Cybersecurity & Network Security" → "Malicious Domain Detection" '
+        '→ "DNS pre-registration monitoring" → "Random Forest stockpile-ratio classifier"\n\n'
+        "RULES:\n"
+        "- a1_primary_domain MUST exactly match one of the TAXONOMY names below.\n"
+        "- Derive a1, a2, and a21 from the INDEPENDENT CLAIMS — that defines what the invention IS.\n"
+        "- For a22 (most granular), prefer the DEPENDENT CLAIMS — they typically name the specific\n"
+        "  algorithm, protocol, or processing technique (e.g. 'Random Forest', 'certificate-log analysis',\n"
+        "  'passive DNS lookup'). The independent claim names the structure; dependents name the techniques.\n"
+        "- Use abstract and background only to confirm/disambiguate your claim-based interpretation.\n"
+        "- If a21/a22 cannot be determined with confidence from the claim language, return an empty string\n"
+        "  — do not guess from the abstract alone.\n"
+        "- If the patent spans multiple domains, pick the one most central to the inventive concept.\n\n"
+        f"TAXONOMY:\n{taxonomy_lines}"
     )
 
-    raw_response = _call_llm(prompt)
+    # Dynamic per-patent data — independent claims are the PRIMARY source for A1/A2;
+    # dependent claims are supporting context that names specific algorithms/techniques (A2.1/A2.2).
+    # CPC/IPC/USPC come with human-readable titles to anchor A1 domain matching.
+    group_a_user = (
+        f"TITLE: {inputs['title']}\n\n"
+        f"INDEPENDENT_CLAIMS (primary source for A1, A2, A2.1 — defines the invention):\n"
+        f"{inputs['independent_claims']}\n\n"
+        f"DEPENDENT_CLAIMS (supporting context — use to refine A2.1 and A2.2 when they name specific algorithms, protocols, or processing steps):\n"
+        f"{inputs['dependent_claims']}\n\n"
+        f"ABSTRACT: {inputs['abstract']}\n"
+        f"BACKGROUND_OR_FIELD: {inputs['background_or_field']}\n"
+        f"CPC: {inputs['cpc_full']}\n"
+        f"IPC: {inputs['ipc_full']}\n"
+        f"USPC: {inputs['uspc_full']}\n"
+    )
+
+    raw_response = _call_llm(group_a_system, group_a_user)
     if not raw_response:
         logger.warning('LLM returned no response for Group A classification of patent %s', patent_record_id)
         return {}

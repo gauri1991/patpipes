@@ -2,6 +2,7 @@
 Analytics admin
 """
 
+from django import forms
 from django.contrib import admin
 from django.utils.html import format_html
 from .models import (
@@ -329,16 +330,81 @@ class DynamicPatentFieldAdmin(admin.ModelAdmin):
 
 # ── LLM Provider Config ──────────────────────────────────────────────────────
 
+class LLMProviderConfigForm(forms.ModelForm):
+    """Admin form with dynamic model choices based on selected provider."""
+
+    model_name = forms.ChoiceField(
+        choices=[],
+        required=False,
+        help_text='Select the model for this provider. Leave at "Provider default" to use the recommended model.',
+    )
+
+    class Meta:
+        model = LLMProviderConfig
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        provider = None
+        if self.instance and self.instance.pk:
+            provider = self.instance.provider
+        elif self.data.get('provider'):
+            provider = self.data['provider']
+
+        if provider and provider in LLMProviderConfig.MODELS_BY_PROVIDER:
+            model_choices = LLMProviderConfig.MODELS_BY_PROVIDER[provider]
+        else:
+            # Show all models when provider not yet selected
+            model_choices = [
+                m for choices in LLMProviderConfig.MODELS_BY_PROVIDER.values()
+                for m in choices
+            ]
+
+        self.fields['model_name'].choices = (
+            [('', f'Provider default ({LLMProviderConfig.DEFAULT_MODEL.get(provider, "see below")})'
+              if provider else 'Provider default')]
+            + model_choices
+        )
+
+    def clean_model_name(self):
+        value = self.cleaned_data.get('model_name') or ''
+        provider = self.cleaned_data.get('provider') or (self.instance.provider if self.instance else '')
+        if value and provider in LLMProviderConfig.MODELS_BY_PROVIDER:
+            valid = [m for m, _ in LLMProviderConfig.MODELS_BY_PROVIDER[provider]]
+            if value not in valid:
+                raise forms.ValidationError(
+                    f'"{value}" is not a known model for {provider}. '
+                    f'Valid: {", ".join(valid)}'
+                )
+        return value
+
+
 @admin.register(LLMProviderConfig)
 class LLMProviderConfigAdmin(admin.ModelAdmin):
-    list_display = ['display_name', 'provider', 'masked_key_display', 'is_active', 'test_status', 'last_tested_at', 'updated_at']
+    form = LLMProviderConfigForm
+    list_display = [
+        'display_name', 'provider', 'resolved_model_display',
+        'masked_key_display', 'is_active', 'test_status', 'last_tested_at', 'updated_at',
+    ]
     list_filter = ['provider', 'is_active', 'test_status']
     search_fields = ['display_name', 'provider', 'notes']
-    readonly_fields = ['id', 'masked_key_display', 'last_tested_at', 'test_status', 'test_error', 'created_at', 'updated_at']
+    readonly_fields = [
+        'id', 'masked_key_display', 'resolved_model_display',
+        'last_tested_at', 'test_status', 'test_error', 'created_at', 'updated_at',
+    ]
 
     fieldsets = (
         ('Provider', {
             'fields': ('provider', 'display_name', 'is_active'),
+        }),
+        ('Model Selection', {
+            'fields': ('model_name', 'resolved_model_display'),
+            'description': (
+                'Choose which model to use for AI patent scoring and narrative generation. '
+                'Anthropic models support prompt caching (saves cost on bulk runs). '
+                'Opus is most capable; Sonnet is the recommended balance of quality and cost; '
+                'Haiku is fastest and cheapest.'
+            ),
         }),
         ('Credentials', {
             'fields': ('api_key', 'masked_key_display', 'api_base_url'),
@@ -360,6 +426,10 @@ class LLMProviderConfigAdmin(admin.ModelAdmin):
     def masked_key_display(self, obj):
         return obj.masked_key
     masked_key_display.short_description = 'Masked Key'
+
+    def resolved_model_display(self, obj):
+        return obj.resolved_model or '—'
+    resolved_model_display.short_description = 'Active Model'
 
     def save_model(self, request, obj, form, change):
         obj.updated_by = request.user

@@ -27,6 +27,72 @@ from ..serializers_simple import SimpleAnalyticsProjectSerializer
 from ..services import AnalyticsDataProcessor
 from ..file_processors import process_patent_dataset
 
+import re as _re
+
+
+def _classify_claim(text: str) -> tuple[str, list[str]]:
+    """Return (claim_type, references). Robust against typos and varied phrasings.
+
+    A claim is dependent if any of these signals fire (in priority order):
+      1. Opening clause references another claim ("of claim N", "according to claim N",
+         "of N,", "as in N,") within the first 200 chars
+      2. Body anywhere references "claim N"
+
+    Otherwise independent — typically opens with "A <noun>, comprising:".
+    """
+    head = text[:200]
+
+    # Layer 1: opener patterns (catches typos like "of 1" instead of "of claim 1")
+    opener_patterns = [
+        r'\bof\s+claim\s+(\d+)\b',
+        r'\baccording\s+to\s+claim\s+(\d+)\b',
+        r'\bas\s+(?:in|recited\s+in)\s+claim\s+(\d+)\b',
+        r'\bclaim\s+(\d+)\b',
+        # Typo fallbacks: "of N,", "of N "  — catches dropped "claim" word
+        r'^\s*\d+\.\s*The\s+\w+\s+of\s+(\d+)[,\s]',
+        r'^\s*\d+\.\s*The\s+\w+\s+according\s+to\s+(\d+)[,\s]',
+    ]
+    for pat in opener_patterns:
+        m = _re.search(pat, head, _re.I | _re.M)
+        if m:
+            refs = _re.findall(pat, text, _re.I | _re.M)
+            return 'dependent', list(dict.fromkeys(refs))
+
+    # Layer 2: full-text scan for "claim N" references
+    refs = _re.findall(r'\bclaim\s+(\d+)\b', text, _re.I)
+    if refs:
+        return 'dependent', list(dict.fromkeys(refs))
+
+    return 'independent', []
+
+
+def _build_claims_from_patent(patent_claims):
+    """Convert patent.claims (list of {number, text} dicts) into a clean claims_text
+    and a claims_structure with reliable independent/dependent classification."""
+    if not isinstance(patent_claims, list) or not patent_claims:
+        return '', []
+    texts, structure = [], []
+    for c in patent_claims:
+        if isinstance(c, dict):
+            num = c.get('number', '')
+            raw = c.get('text', str(c))
+        else:
+            num = ''
+            raw = str(c)
+        text = _re.sub(r'<[^>]+>', '', raw).strip()
+        prefix = f'{num}. ' if num and not text.startswith(f'{num}.') else ''
+        full_text = prefix + text
+        texts.append(full_text)
+        claim_type, refs = _classify_claim(full_text)
+        structure.append({
+            'number': str(num),
+            'text': text,
+            'type': claim_type,
+            'references': refs,
+        })
+    return '\n'.join(texts), structure
+
+
 class PortfolioDatasetView(APIView):
     """
     GET /analytics/api/portfolio/{portfolio_id}/as-dataset/
@@ -561,15 +627,10 @@ class PatentDatasetViewSet(viewsets.ModelViewSet):
         for idx, patent in enumerate(patents.iterator(), start=1):
             assignee = ', '.join(patent.assignees) if isinstance(patent.assignees, list) else str(patent.assignees or '')
             inventor = ', '.join(patent.inventors) if isinstance(patent.inventors, list) else str(patent.inventors or '')
-            ipc = ', '.join(patent.ipc_classifications) if isinstance(patent.ipc_classifications, list) else str(patent.ipc_classifications or '')
-            claims_text = ''
-            claims_structure = []
-            if isinstance(patent.claims, list):
-                claims_text = '\n'.join(
-                    c.get('text', str(c)) if isinstance(c, dict) else str(c)
-                    for c in patent.claims
-                )
-                claims_structure = patent.claims
+            ipc  = ', '.join(patent.ipc_classifications)  if isinstance(patent.ipc_classifications, list)  else str(patent.ipc_classifications or '')
+            cpc  = ', '.join(patent.cpc_classifications)  if isinstance(patent.cpc_classifications, list)  else str(patent.cpc_classifications or '')
+            uspc = ', '.join(patent.uspc_classifications) if isinstance(patent.uspc_classifications, list) else str(patent.uspc_classifications or '')
+            claims_text, claims_structure = _build_claims_from_patent(patent.claims)
 
             records.append(PatentRecord(
                 dataset=dataset,
@@ -577,11 +638,14 @@ class PatentDatasetViewSet(viewsets.ModelViewSet):
                 patent_id=patent.application_number or patent.patent_number or str(patent.id),
                 title=patent.title or '',
                 abstract=patent.abstract or '',
+                description=patent.description or '',
                 assignee=assignee,
                 inventor=inventor,
                 filing_date=patent.filing_date,
                 grant_date=patent.grant_date,
                 ipc_classification=ipc,
+                cpc_classification=cpc,
+                uspc_classification=uspc,
                 patent_type=patent.patent_type or '',
                 legal_status=patent.status or '',
                 claims=claims_text,

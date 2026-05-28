@@ -318,6 +318,7 @@ def _rule_ADJACENT_REREAD(a, t):  return a.get('i3_adjacent_market_reread', 0) >
 def _rule_SALVAGE(a, t):          return (a.get('h1_claim_strength', 0) <= t['salvage_h1_max'] or (a.get('e4_remaining_term_years') or 99) < t['salvage_e4_max'] or a.get('h2_prior_art_exposure', 0) <= t['salvage_h2_max'])
 def _rule_PRE_EXPIRY(a, t):       return t['pre_expiry_min_years'] <= (a.get('e4_remaining_term_years') or 0) <= t['pre_expiry_max_years']
 def _rule_PROVENANCE(a, t):       return bool(a.get('a1_primary_domain')) and bool(a.get('a4_subsystem'))
+def _rule_TECH_NICHE(a, t):       return bool(a.get('a22_tech_niche')) and bool(a.get('a21_tech_detail'))
 
 _BUNDLE_RULES: Dict[str, Any] = {
     'TECH_DOMAIN': _rule_TECH_DOMAIN,
@@ -353,6 +354,7 @@ _BUNDLE_RULES: Dict[str, Any] = {
     'SALVAGE': _rule_SALVAGE,
     'PRE_EXPIRY': _rule_PRE_EXPIRY,
     'PROVENANCE': _rule_PROVENANCE,
+    'TECH_NICHE': _rule_TECH_NICHE,
 }
 
 _BUNDLE_NAMES: Dict[str, str] = {
@@ -389,6 +391,7 @@ _BUNDLE_NAMES: Dict[str, str] = {
     'SALVAGE': 'Salvage / Defensive-Volume Lot',
     'PRE_EXPIRY': 'Pre-Expiry / Last-Window',
     'PROVENANCE': 'Provenance-Coherent',
+    'TECH_NICHE': 'Technology Niche',
 }
 
 _COMPOSITION_HINTS: Dict[str, str] = {
@@ -425,6 +428,7 @@ _COMPOSITION_HINTS: Dict[str, str] = {
     'SALVAGE': 'Volume lot: price as a defensive ammunition package, not individual asset value.',
     'PRE_EXPIRY': 'Reserve: last-window patents attract litigation-finance buyers; price accordingly.',
     'PROVENANCE': 'Provenance-coherent: same R&D lineage reduces claim-construction friction for buyers.',
+    'TECH_NICHE': 'Vertical slice: patents share the same specific algorithm/approach; pitch as a targeted niche position.',
 }
 
 
@@ -564,7 +568,11 @@ _HI_FIELDS = [
     'i2_implementation_maturity','i3_adjacent_market_reread','i4_workaround_complexity',
 ]
 
-_GROUP_A_FIELDS = ['a1_primary_domain', 'a2_tech_subcategory', 'a3_stack_layer', 'a4_subsystem', 'a5_use_case']
+_GROUP_A_FIELDS = [
+    'a1_primary_domain', 'a2_tech_subcategory',
+    'a21_tech_detail', 'a22_tech_niche',    # L3 and L4 — claim-derived
+    'a3_stack_layer', 'a4_subsystem', 'a5_use_case',
+]
 
 
 def _pct_hi_filled(attrs: dict) -> float:
@@ -598,10 +606,15 @@ def _compute_completeness(patent_attrs_list: List[dict]) -> dict:
     with_manual = sum(1 for a in patent_attrs_list if a.get('manually_set_fields'))
     avg_pct = round(sum(_pct_hi_filled(a) for a in patent_attrs_list) / max(total, 1), 1)
     avg_a_pct = round(sum(_pct_a_filled(a) for a in patent_attrs_list) / max(total, 1), 1)
+    # % of patents that have reached depth-4 classification (a22_tech_niche filled)
+    taxonomy_depth_pct = round(
+        sum(1 for a in patent_attrs_list if a.get('a22_tech_niche')) / max(total, 1) * 100, 1
+    )
     return {
         'total': total,
         'with_ai_attributes': with_ai,
         'with_manual_attributes': with_manual,
         'pct_complete': avg_pct,
         'pct_a_complete': avg_a_pct,
+        'taxonomy_depth_pct': taxonomy_depth_pct,
     }

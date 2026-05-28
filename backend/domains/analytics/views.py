@@ -30,6 +30,34 @@ from .serializers_simple import SimpleAnalyticsProjectSerializer
 from .services import AnalyticsDataProcessor, ReportGenerator, VisualizationEngine
 from .file_processors import process_patent_dataset
 
+import re as _re
+
+
+def _build_claims_from_patent(patent_claims):
+    """Convert patent.claims (list of {number, text} dicts) into a clean claims_text
+    and a claims_structure suitable for the frontend ClaimsParser."""
+    if not isinstance(patent_claims, list) or not patent_claims:
+        return '', []
+    texts, structure = [], []
+    for c in patent_claims:
+        if isinstance(c, dict):
+            num = c.get('number', '')
+            raw = c.get('text', str(c))
+        else:
+            num = ''
+            raw = str(c)
+        text = _re.sub(r'<[^>]+>', '', raw).strip()
+        prefix = f'{num}. ' if num and not text.startswith(f'{num}.') else ''
+        texts.append(prefix + text)
+        refs = _re.findall(r'\bclaim\s+(\d+)\b', text, _re.I)
+        structure.append({
+            'number': str(num),
+            'text': text,
+            'type': 'dependent' if refs else 'independent',
+            'references': refs,
+        })
+    return '\n'.join(texts), structure
+
 
 class AnalyticsProjectViewSet(viewsets.ModelViewSet):
     """Analytics project management"""
@@ -1019,15 +1047,10 @@ class PatentDatasetViewSet(viewsets.ModelViewSet):
         for idx, patent in enumerate(patents.iterator(), start=1):
             assignee = ', '.join(patent.assignees) if isinstance(patent.assignees, list) else str(patent.assignees or '')
             inventor = ', '.join(patent.inventors) if isinstance(patent.inventors, list) else str(patent.inventors or '')
-            ipc = ', '.join(patent.ipc_classifications) if isinstance(patent.ipc_classifications, list) else str(patent.ipc_classifications or '')
-            claims_text = ''
-            claims_structure = []
-            if isinstance(patent.claims, list):
-                claims_text = '\n'.join(
-                    c.get('text', str(c)) if isinstance(c, dict) else str(c)
-                    for c in patent.claims
-                )
-                claims_structure = patent.claims
+            ipc  = ', '.join(patent.ipc_classifications)  if isinstance(patent.ipc_classifications, list)  else str(patent.ipc_classifications or '')
+            cpc  = ', '.join(patent.cpc_classifications)  if isinstance(patent.cpc_classifications, list)  else str(patent.cpc_classifications or '')
+            uspc = ', '.join(patent.uspc_classifications) if isinstance(patent.uspc_classifications, list) else str(patent.uspc_classifications or '')
+            claims_text, claims_structure = _build_claims_from_patent(patent.claims)
 
             records.append(PatentRecord(
                 dataset=dataset,
@@ -1035,11 +1058,14 @@ class PatentDatasetViewSet(viewsets.ModelViewSet):
                 patent_id=patent.application_number or patent.patent_number or str(patent.id),
                 title=patent.title or '',
                 abstract=patent.abstract or '',
+                description=patent.description or '',
                 assignee=assignee,
                 inventor=inventor,
                 filing_date=patent.filing_date,
                 grant_date=patent.grant_date,
                 ipc_classification=ipc,
+                cpc_classification=cpc,
+                uspc_classification=uspc,
                 patent_type=patent.patent_type or '',
                 legal_status=patent.status or '',
                 claims=claims_text,

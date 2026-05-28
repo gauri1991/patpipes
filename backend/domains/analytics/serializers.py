@@ -491,8 +491,10 @@ class PatentBundleAttributesSerializer(serializers.ModelSerializer):
         model = PatentBundleAttributes
         fields = [
             'id', 'patent_record_id', 'patent_id', 'title',
-            # Group A
-            'a1_primary_domain', 'a2_tech_subcategory', 'a3_stack_layer', 'a4_subsystem', 'a5_use_case',
+            # Group A (4-level hierarchy: A1→A2→A2.1→A2.2, then A3/A4/A5)
+            'a1_primary_domain', 'a2_tech_subcategory',
+            'a21_tech_detail', 'a22_tech_niche',
+            'a3_stack_layer', 'a4_subsystem', 'a5_use_case',
             # Group B
             'b1_sep_potential', 'b2_standard_tagged', 'b3_interface_role',
             # Group C

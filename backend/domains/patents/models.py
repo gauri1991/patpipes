@@ -197,10 +197,19 @@ class Patent(models.Model):
     inventors = models.JSONField(default=list, blank=True)
     assignees = models.JSONField(default=list, blank=True)
     
-    # Classification
+    # Classification (3 separate systems — IPC=international, CPC=cooperative, USPC=US legacy)
     technology_area = models.CharField(max_length=200, blank=True)
-    ipc_classifications = models.JSONField(default=list, blank=True)
-    
+    ipc_classifications  = models.JSONField(default=list, blank=True)
+    cpc_classifications  = models.JSONField(default=list, blank=True)
+    uspc_classifications = models.JSONField(default=list, blank=True)
+
+    # Raw ODP API response — preserves all metadata for later extraction
+    odp_raw_data = models.JSONField(default=dict, blank=True)
+
+    # Lens.org cross-reference (column already exists in DB from migration 0014)
+    lens_id = models.CharField(max_length=50, blank=True, db_index=True, help_text='Lens.org unique identifier')
+
+
     # Financial
     estimated_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     maintenance_cost = models.DecimalField(max_digits=8, decimal_places=2, default=0)
@@ -208,6 +217,14 @@ class Patent(models.Model):
     # Content
     abstract = models.TextField(blank=True)
     claims = models.JSONField(default=list, blank=True)
+    # Full specification text — sourced from USPTO ODP grant_text or pgpub_text
+    # (parsed XML description section). Can be 50K–500K chars; loaded on demand.
+    description = models.TextField(blank=True)
+    description_source = models.CharField(
+        max_length=20, blank=True, default='',
+        help_text="'grant', 'pgpub', or '' if not loaded",
+    )
+    description_fetched_at = models.DateTimeField(null=True, blank=True)
     
     # Metadata
     tags = models.JSONField(default=list, blank=True)

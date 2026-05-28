@@ -27,6 +27,39 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiClient } from '@/services/apiClient';
 
+// ── Claim helpers ───────────────────────────────────────────────────────────
+// Strip HTML tags that USPTO XML embeds in claim text (e.g. "<b>1</b>. A system…").
+function stripHtml(text: string): string {
+  return text.replace(/<[^>]+>/g, '').trim();
+}
+
+// Strip the leading "N. " number prefix since the chip already shows the claim number.
+function stripClaimNumber(text: string): string {
+  return text.replace(/^\s*\d+\.\s*/, '');
+}
+
+// Robust dependent-claim detection — same logic as the backend bundle parser.
+// Catches typos like "The system of 1" (missing the word "claim").
+function classifyClaim(text: string): { type: 'independent' | 'dependent'; refs: number[] } {
+  const head = text.slice(0, 200);
+  const patterns: RegExp[] = [
+    /\bof\s+claim\s+(\d+)\b/i,
+    /\baccording\s+to\s+claim\s+(\d+)\b/i,
+    /\bas\s+(?:in|recited\s+in|claimed\s+in|set\s+forth\s+in)\s+claim\s+(\d+)\b/i,
+    /\bclaim\s+(\d+)\b/i,
+    /^\s*\d+\.\s*The\s+\w+\s+of\s+(\d+)[,\s]/im,
+    /^\s*\d+\.\s*The\s+\w+\s+according\s+to\s+(\d+)[,\s]/im,
+  ];
+  for (const p of patterns) {
+    if (p.test(head)) {
+      const all = Array.from(text.matchAll(new RegExp(p.source, p.flags + 'g')));
+      const refs = Array.from(new Set(all.map(m => parseInt(m[1] ?? '', 10)).filter(n => !Number.isNaN(n))));
+      return { type: 'dependent', refs };
+    }
+  }
+  return { type: 'independent', refs: [] };
+}
+
 interface PatentDetail {
   id: string;
   portfolio: string | null;
@@ -349,31 +382,69 @@ export default function PatentDetailPage() {
       </div>
 
       {/* Claims */}
-      {patent.claims && patent.claims.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Claims ({patent.claims.length})</CardTitle>
-            <CardDescription>Patent claims defining the scope of protection</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {patent.claims.map((claim, index) => (
-                <div key={index} className="border rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="outline" className="text-xs">
-                      Claim {claim.number ?? index + 1}
-                    </Badge>
-                    {claim.type && (
-                      <Badge variant="secondary" className="text-xs">{claim.type}</Badge>
-                    )}
-                  </div>
-                  <p className="text-sm">{claim.text}</p>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {patent.claims && patent.claims.length > 0 && (() => {
+        // Pre-classify once so the header can show counts
+        const enriched = patent.claims.map((claim, index) => {
+          const cleaned = stripHtml(claim.text || '');
+          const body = stripClaimNumber(cleaned);
+          const { type, refs } = classifyClaim(cleaned);
+          return {
+            index,
+            num: claim.number ?? index + 1,
+            body,
+            type,
+            refs,
+          };
+        });
+        const indCount = enriched.filter(c => c.type === 'independent').length;
+        const depCount = enriched.length - indCount;
+
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                Claims — {patent.claims.length} total ({indCount} independent, {depCount} dependent)
+              </CardTitle>
+              <CardDescription>Patent claims defining the scope of protection</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {enriched.map(c => {
+                  const isInd = c.type === 'independent';
+                  return (
+                    <div
+                      key={c.index}
+                      className={`rounded-lg border p-4 ${
+                        isInd
+                          ? 'border-primary/40 bg-primary/5'
+                          : 'border-border bg-muted/30 text-muted-foreground ml-4'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge
+                          className={`text-xs font-mono ${
+                            isInd
+                              ? 'bg-primary text-primary-foreground hover:bg-primary'
+                              : 'bg-muted-foreground/20'
+                          }`}
+                        >
+                          Claim {c.num}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {isInd
+                            ? 'Independent'
+                            : `Dependent · refs ${c.refs.length ? c.refs.join(', ') : '?'}`}
+                        </Badge>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap leading-relaxed">{c.body}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Related Infringement Cases */}
       {relatedCases.length > 0 && (

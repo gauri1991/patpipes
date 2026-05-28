@@ -1396,6 +1396,17 @@ class AnalyticsApiService extends ApiClient {
     );
   }
 
+  async classifyTechnology(
+    projectId: string,
+    patentRecordIds?: string[],
+    force = false
+  ): Promise<ApiResponse<{ status: string; classified_count?: number; task_id?: string; result?: Record<string, string> }>> {
+    return this.fetchWithAuth(
+      `/analytics/api/projects/${projectId}/classify_technology/`,
+      { method: 'POST', body: JSON.stringify({ patent_record_ids: patentRecordIds, force }) }
+    );
+  }
+
   async getBundleAttributes(
     projectId: string,
     limit = 50,
@@ -1560,6 +1571,8 @@ export interface BundleAttributes {
   // Group A
   a1_primary_domain: string;
   a2_tech_subcategory: string;
+  a21_tech_detail: string;
+  a22_tech_niche: string;
   a3_stack_layer: string;
   a4_subsystem: string;
   a5_use_case: string;
@@ -1691,6 +1704,7 @@ export interface BundleAnalysisResult {
     with_ai_attributes: number;
     with_manual_attributes: number;
     pct_complete: number;
+    pct_a_complete: number;
   };
   assignment_matrix: {
     patent_ids: string[];

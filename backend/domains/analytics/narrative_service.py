@@ -48,10 +48,11 @@ def _try_llm_narrative(data: Dict, narrative_type: str) -> Optional[str]:
 
         prompt = _build_prompt(data, narrative_type)
 
+        model = config.resolved_model
         if config.provider == 'anthropic':
-            return _call_anthropic(api_key, prompt)
+            return _call_anthropic(api_key, prompt, model=model)
         elif config.provider == 'openai':
-            return _call_openai(api_key, prompt)
+            return _call_openai(api_key, prompt, model=model)
 
         return None
     except Exception as e:
@@ -116,31 +117,52 @@ Write actionable recommendations. Keep under 200 words."""
     return f"Summarize this patent analysis data in 3 paragraphs: {str(data)[:2000]}"
 
 
-def _call_anthropic(api_key: str, prompt: str) -> Optional[str]:
-    """Call Anthropic Claude API."""
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model='claude-sonnet-4-20250514',
-            max_tokens=1024,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        return response.content[0].text
-    except Exception as e:
-        logger.warning('Anthropic API call failed: %s', e)
-        return None
+def _call_anthropic(api_key: str, prompt: str, system_text: str = '', model: str = 'claude-sonnet-4-6') -> Optional[str]:
+    """Call Anthropic Claude API with optional cached system prompt and 429 retry."""
+    import anthropic, time
+    client = anthropic.Anthropic(api_key=api_key)
+    kwargs: dict = {
+        'model': model,
+        'max_tokens': 4096,
+        'messages': [{'role': 'user', 'content': prompt}],
+    }
+    if system_text:
+        kwargs['system'] = [{
+            'type': 'text',
+            'text': system_text,
+            'cache_control': {'type': 'ephemeral'},
+        }]
+
+    for attempt in range(4):
+        try:
+            response = client.messages.create(**kwargs)
+            return response.content[0].text
+        except anthropic.RateLimitError:
+            if attempt >= 3:
+                logger.error('Anthropic rate limit: retries exhausted')
+                return None
+            wait = 30 * (2 ** attempt)
+            logger.warning('Anthropic rate limit — waiting %d s (attempt %d/3)', wait, attempt + 1)
+            time.sleep(wait)
+        except Exception as e:
+            logger.warning('Anthropic call failed: %s', e)
+            return None
+    return None
 
 
-def _call_openai(api_key: str, prompt: str) -> Optional[str]:
-    """Call OpenAI API."""
+def _call_openai(api_key: str, prompt: str, system_text: str = '', model: str = 'gpt-4o') -> Optional[str]:
+    """Call OpenAI API with optional system prompt."""
     try:
         import openai
         client = openai.OpenAI(api_key=api_key)
+        messages = []
+        if system_text:
+            messages.append({'role': 'system', 'content': system_text})
+        messages.append({'role': 'user', 'content': prompt})
         response = client.chat.completions.create(
-            model='gpt-4o',
-            max_tokens=1024,
-            messages=[{'role': 'user', 'content': prompt}],
+            model=model,
+            max_tokens=4096,
+            messages=messages,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -282,8 +304,10 @@ ARCHETYPE_DATA = {
 
 # Section 11 attribute-to-copy mapping (T1/T2/T3/T4 tiers)
 ATTR_COPY_MAP = {
-    'A1': {'phrase': 'covers {value}', 'tier': 'T1'},
-    'A2': {'phrase': 'with applicability across {value}', 'tier': 'T1'},
+    'A1':  {'phrase': 'covers {value}', 'tier': 'T1'},
+    'A2':  {'phrase': 'with applicability across {value}', 'tier': 'T1'},
+    'A21': {'phrase': 'specifically in {value}', 'tier': 'T1'},
+    'A22': {'phrase': 'using {value}', 'tier': 'T2'},
     'A3_Hardware': {'phrase': 'implementation-grade hardware coverage', 'tier': 'T2'},
     'A3_App': {'phrase': 'software-deployable across product lines', 'tier': 'T2'},
     'A4': {'phrase': 'spans {value} design', 'tier': 'T2'},
@@ -384,12 +408,23 @@ def suggest_archetype(bundle_codes: list, patent_attributes: list, scorecard: di
     long_e4 = any((a.get('e4_remaining_term_years') or 0) > 10 for a in patent_attributes)
     has_a4 = any(a.get('a4_subsystem') for a in patent_attributes)
 
+    # A2.2 niche signals — derived from claim language, more precise than A1 domain breadth
+    unique_niches = set(
+        a.get('a22_tech_niche', '') for a in patent_attributes if a.get('a22_tech_niche')
+    )
+    tight_niche = len(unique_niches) == 1 and len(patent_attributes) >= 3
+    diverse_niches = len(unique_niches) >= 3
+
     if high_d2 and has_h9 and h7_survived:
         return 'NPE-LIT', 'High teardown detectability (D2≥2) + EoU availability (H9) + PTAB-survived (H7) — §4.5 rule 1'
     if high_d3 and high_i1:
         return 'OC-OFF', 'High reads-on score (D3≥2) + strong product mapping (I1≥2) — §4.5 rule 2'
+    if tight_niche:
+        return 'NPE-LIC', f'All patents share the same A2.2 niche ({list(unique_niches)[0]}) — tightly scoped portfolio ideal for targeted licensing — §4.5 A2.2 rule'
     if broad_domains and high_g3:
         return 'OC-EXP', f'Broad domain coverage ({len(unique_domains)} domains) + cross-industry applicability (G3≥2) — §4.5 rule 3'
+    if diverse_niches:
+        return 'OC-DEF', f'{len(unique_niches)} distinct A2.2 niches — broad technical coverage signals defensive moat — §4.5 A2.2 rule'
     if clean_h8 and no_encumbrance and high_h1 and long_e4:
         return 'DEF-AGG', 'Clean title (H8) + unencumbered (H10) + strong claims (H1≥2) + long term (E4>10y) — §4.5 rule 4'
     if has_a4 and clean_h8:
@@ -408,6 +443,10 @@ def generate_meta_tags(patent_attributes: list, transaction_type: str, bundle_co
             technologies.add(a['a1_primary_domain'])
         if a.get('a2_tech_subcategory'):
             industries.add(a['a2_tech_subcategory'])
+        if a.get('a21_tech_detail'):
+            technologies.add(a['a21_tech_detail'])
+        if a.get('a22_tech_niche'):
+            technologies.add(a['a22_tech_niche'])
         if a.get('a3_stack_layer'):
             technologies.add(a['a3_stack_layer'])
         if a.get('a4_subsystem'):
@@ -677,11 +716,12 @@ def generate_deck(package, bundle_data: dict, patent_attributes: list, listing_t
                 "6-Supporting Materials (claim charts/wrappers/title), 7-Next Steps.\n"
                 "Each slide: title + 3–5 bullets + one speaker note. Active voice. No unsupported claims."
             )
+            model = config.resolved_model
             raw = None
             if config.provider == 'anthropic':
-                raw = _call_anthropic(api_key, prompt)
+                raw = _call_anthropic(api_key, prompt, model=model)
             elif config.provider == 'openai':
-                raw = _call_openai(api_key, prompt)
+                raw = _call_openai(api_key, prompt, model=model)
             if raw:
                 return raw
     except Exception as e:
@@ -798,11 +838,12 @@ def generate_cim(package, bundle_data: dict, patent_attributes: list) -> str:
                 "Write in banker-formal register. Source every claim to an attribute or market fact. "
                 "No unsupported adjectives. Structure: What / Why this portfolio / Who should acquire it / Process."
             )
+            model = config.resolved_model
             raw = None
             if config.provider == 'anthropic':
-                raw = _call_anthropic(api_key, prompt)
+                raw = _call_anthropic(api_key, prompt, model=model)
             elif config.provider == 'openai':
-                raw = _call_openai(api_key, prompt)
+                raw = _call_openai(api_key, prompt, model=model)
             if raw:
                 exec_summary = raw
     except Exception as e:
@@ -1038,12 +1079,22 @@ def _get_best_t3_signal(patent_attributes: list, scorecard: dict, bundle_codes: 
 
 
 def _get_domain_from_attributes(patent_attributes: list) -> str:
-    """Extract primary domain from patent attributes."""
+    """Extract the most specific available domain label from patent attributes.
+
+    Prefers A2.1 (specific technique) when consistently filled — produces a
+    tighter, buyer-specific teaser. Falls back to A1 (broad domain).
+    """
+    from collections import Counter
+    # Try A2.1 first — if ≥50% of patents have it and it's consistent, use it
+    a21_values = [a.get('a21_tech_detail', '') for a in patent_attributes if a.get('a21_tech_detail')]
+    if a21_values and len(a21_values) >= max(1, len(patent_attributes) // 2):
+        most_common_a21, count = Counter(a21_values).most_common(1)[0]
+        if count >= max(1, len(a21_values) // 2):
+            return most_common_a21
+    # Fall back to A1
     domains = [a.get('a1_primary_domain', '') for a in patent_attributes if a.get('a1_primary_domain')]
     if not domains:
         return ''
-    # Return the most common domain
-    from collections import Counter
     return Counter(domains).most_common(1)[0][0]
 
 
@@ -1266,43 +1317,44 @@ def _build_llm_prompt(package, bundle_data: dict, patent_attributes: list, patte
         'market_context': package.mcl_entries or [],
     }
 
-    framework_prompt = """You are a patent broker's copywriter. Produce a sales-package value proposition following the Value_Proposition_Framework_v3 style.
+    # Static system instructions (same for every package — cacheable by Anthropic)
+    system_text = (
+        "You are a patent broker's copywriter. Produce sales-package value propositions "
+        "following the Value_Proposition_Framework_v3 style.\n\n"
+        "INSTRUCTIONS:\n"
+        "1. Generate a listing following the PATTERN specified in the user message.\n"
+        "   Patterns: A=Strategic Flagship (250-350 words), B=Compressed Strategic (180-220 words), "
+        "C=Technical-Spec (120-200 words), D=Single-Asset Narrow (150-200 words).\n"
+        "2. Use the archetype register from Section 13 for the ARCHETYPE specified.\n"
+        "3. Always include: Header, Block 1 (opener), Block 3 (3-4 bullets), Block 6 (CTA).\n"
+        "4. Conditional blocks by pattern:\n"
+        "   - A: + Block 1b triplet, Block 2, Block 4 if market_context non-empty, Block 5 full prose\n"
+        "   - B: + Block 1b triplet, Block 3 close-tag as 4th bullet, no Block 5\n"
+        "   - C: mechanism bullets, optional Block 1b, no Block 5\n"
+        "   - D: Block 2 required, no Block 1b, no Block 5\n"
+        "5. STYLE RULES (strict):\n"
+        "   - Active voice, third-person, broker-as-narrator\n"
+        "   - Banned: innovative, cutting-edge, revolutionary, best-in-class, paradigm-shifting\n"
+        "   - No pricing, no valuation figures\n"
+        "   - T4 statements only if market_context is non-empty\n"
+        "   - Em dashes inside bullets only\n"
+        "6. After the listing, add a TIER REPORT section: each sentence followed by its tier (T1/T2/T3/T4).\n\n"
+        "OUTPUT FORMAT:\n"
+        "PATTERN: <letter> — <pattern name>\n"
+        "ARCHETYPE: <code>\n\n"
+        "[listing markdown]\n\n"
+        "TIER REPORT\n"
+        "[sentence] [T1/T2/T3/T4]\n"
+        "..."
+    )
 
-INPUTS:
-""" + json.dumps(payload, indent=2, default=str) + f"""
+    # Dynamic user data (package-specific)
+    user_text = (
+        f"PATTERN SELECTED: {pattern}\nARCHETYPE: {archetype}\n\nINPUTS:\n"
+        + json.dumps(payload, indent=2, default=str)
+    )
 
-PATTERN SELECTED: {pattern}
-ARCHETYPE: {archetype}
-
-INSTRUCTIONS:
-1. Generate a listing following Pattern {pattern} ({{'A':'Strategic Flagship','B':'Compressed Strategic','C':'Technical-Spec','D':'Single-Asset Narrow'}}['{pattern}']).
-2. Use the archetype register from Section 13 for {archetype}.
-3. Include required blocks: Header, Block 1 (opener), Block 3 (3-4 bullets), Block 6 (CTA).
-4. Include conditional blocks based on pattern:
-   - Pattern A: + Block 1b triplet, Block 2, Block 4 if market_context non-empty, Block 5 full prose
-   - Pattern B: + Block 1b triplet, Block 3 close-tag as 4th bullet, no Block 5
-   - Pattern C: mechanism bullets, optional Block 1b, no Block 5
-   - Pattern D: Block 2 required, no Block 1b, no Block 5
-5. Target length: A=250-350 words, B=180-220 words, C=120-200 words, D=150-200 words.
-6. STYLE RULES (strict):
-   - Active voice, third-person, broker-as-narrator
-   - Banned adjectives: innovative, cutting-edge, revolutionary, best-in-class, paradigm-shifting
-   - No pricing, no valuation
-   - T4 statements only if market_context non-empty
-   - Em dashes inside bullets only
-7. After the listing, add a TIER REPORT section listing each sentence with its tier (T1/T2/T3/T4).
-
-Output format:
-PATTERN: {pattern} — [pattern name]
-ARCHETYPE: {archetype}
-
-[listing markdown]
-
-TIER REPORT
-[sentence] [T1/T2/T3/T4]
-...
-"""
-    return framework_prompt
+    return system_text, user_text
 
 
 def generate_value_proposition(package, bundle_data: dict, patent_attributes: list) -> dict:
@@ -1345,12 +1397,13 @@ def generate_value_proposition(package, bundle_data: dict, patent_attributes: li
                 api_key = Signer().unsign(config.api_key)
             except Exception:
                 api_key = config.api_key
-            prompt = _build_llm_prompt(package, bundle_data, patent_attributes, pattern)
+            system_text, user_text = _build_llm_prompt(package, bundle_data, patent_attributes, pattern)
+            model = config.resolved_model
             raw = None
             if config.provider == 'anthropic':
-                raw = _call_anthropic(api_key, prompt)
+                raw = _call_anthropic(api_key, user_text, system_text=system_text, model=model)
             elif config.provider == 'openai':
-                raw = _call_openai(api_key, prompt)
+                raw = _call_openai(api_key, user_text, system_text=system_text, model=model)
             if raw:
                 listing_text = raw
                 tier_report = _parse_tier_report_from_llm(raw)

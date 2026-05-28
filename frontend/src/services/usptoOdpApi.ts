@@ -111,7 +111,7 @@ export interface ODPSearchResult<T = any> {
 // Analysis Types
 // ---------------------------------------------------------------------------
 
-export type AnalysisModelKey = 'sonnet' | 'opus';
+export type AnalysisModelKey = 'sonnet' | 'opus' | 'haiku';
 
 export interface AnalysisKeyword {
   term: string;

@@ -18,6 +18,7 @@ import { PatentDocumentsTab } from '@/components/patent-search/PatentDocumentsTa
 import { PatentForeignPriorityTab } from '@/components/patent-search/PatentForeignPriorityTab';
 import { PatentAdjustmentTab } from '@/components/patent-search/PatentAdjustmentTab';
 import { PatentFullTextTab } from '@/components/patent-search/PatentFullTextTab';
+import { PatentAnalyzeTab } from '@/components/patent-search/PatentAnalyzeTab';
 import { LensEnrichmentTab } from '@/components/patent-search/LensEnrichmentTab';
 import { DataSourceSelector, type DataSource } from '@/components/patent-search/DataSourceSelector';
 import usptoOdpApi from '@/services/usptoOdpApi';
@@ -294,6 +295,7 @@ export default function PatentSearchPage() {
                 <TabsTrigger value="foreign-priority">Foreign Priority</TabsTrigger>
                 <TabsTrigger value="adjustment">PTA/PTE</TabsTrigger>
                 <TabsTrigger value="full-text">Full Text</TabsTrigger>
+                <TabsTrigger value="analyze">AI Analysis</TabsTrigger>
               </TabsList>
 
               <TabsContent value="overview" className="mt-4">
@@ -332,6 +334,9 @@ export default function PatentSearchPage() {
               </TabsContent>
               <TabsContent value="full-text" className="mt-4">
                 {loadedTabs.has('full-text') && <PatentFullTextTab appId={appId} />}
+              </TabsContent>
+              <TabsContent value="analyze" className="mt-4">
+                {loadedTabs.has('analyze') && <PatentAnalyzeTab appId={appId} />}
               </TabsContent>
             </Tabs>
           )}
