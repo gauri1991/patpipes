@@ -101,7 +101,7 @@ export function EvidenceEditDialog({ open, onOpenChange, evidence, onSaved }: Ev
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Evidence</DialogTitle>
           <DialogDescription>Update the metadata for this evidence item.</DialogDescription>

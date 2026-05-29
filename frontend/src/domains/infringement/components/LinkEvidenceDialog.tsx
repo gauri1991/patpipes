@@ -73,7 +73,7 @@ export function LinkEvidenceDialog({ open, onOpenChange, caseId, element, onSave
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Link evidence to element</DialogTitle>
           <DialogDescription>
