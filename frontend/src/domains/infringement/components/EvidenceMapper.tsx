@@ -17,7 +17,7 @@ import { ClaimMapping, ClaimElement, Annotation, ScreenshotBrief, infringementAp
 import { PdfRegionViewer, CaptureMeta } from './PdfRegionViewer';
 import { ScreenshotAnnotator, AnnotationOverlay } from './ScreenshotAnnotator';
 import { HighlightedText, colorsInText } from './HighlightedText';
-import { toMediaPath } from '@/domains/infringement/lib/mediaUrl';
+import { toMediaUrl } from '@/domains/infringement/lib/mediaUrl';
 import { Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -82,7 +82,7 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
         setLoading(false);
         return;
       }
-      setFileUrl(toMediaPath(evRes.data.file));
+      setFileUrl(toMediaUrl(evRes.data.file));
       setEvidenceTitle(evRes.data.title);
       setRelatedClaims((evRes.data.related_claims || []).map((c: any) => String(c)));
       await loadMappings();
@@ -443,7 +443,7 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
                                   className="block relative"
                                 >
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img src={toMediaPath(s.image)} alt="evidence" className="h-12 w-auto rounded border hover:ring-2 ring-cyan-400" />
+                                  <img src={toMediaUrl(s.image)} alt="evidence" className="h-12 w-auto rounded border hover:ring-2 ring-cyan-400" />
                                   <AnnotationOverlay annotations={s.annotations} />
                                 </button>
                                 <button
@@ -569,7 +569,7 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
               </button>
             </div>
             <ScreenshotAnnotator
-              imageUrl={toMediaPath(editShot.image)}
+              imageUrl={toMediaUrl(editShot.image)}
               value={editAnnotations}
               onChange={setEditAnnotations}
               allowedColors={colorsForElements(editShot.claim_elements || [])}

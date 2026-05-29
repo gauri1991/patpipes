@@ -23,7 +23,7 @@ import { getEvidenceTypeLabel, formatDate } from '@/domains/infringement/utils';
 import { EvidenceUploadDialog } from './EvidenceUploadDialog';
 import { SuggestEvidenceDialog } from './SuggestEvidenceDialog';
 import { EvidenceEditDialog } from './EvidenceEditDialog';
-import { toMediaPath } from '@/domains/infringement/lib/mediaUrl';
+import { toMediaUrl } from '@/domains/infringement/lib/mediaUrl';
 import { Evidence } from '@/services/infringementApi';
 import { Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
@@ -239,7 +239,7 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
                     )}
                     {item.file && (
                       <Button variant="ghost" size="sm" asChild>
-                        <a href={toMediaPath(item.file)} download>
+                        <a href={toMediaUrl(item.file)} download>
                           <Download className="h-4 w-4" />
                         </a>
                       </Button>

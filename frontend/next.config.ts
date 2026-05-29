@@ -92,13 +92,6 @@ const nextConfig: NextConfig = {
         source: '/api/:path*',
         destination: `${backendUrl}/api/:path*`,
       },
-      // Proxy user-uploaded media (evidence PDFs, screenshots) same-origin so the
-      // browser never makes a cross-origin / mixed-content (http vs https) request to
-      // the backend host — that was blocking PDF loads in production.
-      {
-        source: '/media/:path*',
-        destination: `${backendUrl}/media/:path*`,
-      },
     ]
   },
 };
