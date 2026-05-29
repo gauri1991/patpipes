@@ -13,6 +13,7 @@ from django.contrib.auth import login
 from django.utils import timezone
 
 from .models import User, UserProfile, UserSettings
+from .throttling import LoginRateThrottle
 from .serializers import (
     CustomTokenObtainPairSerializer,
     LoginSerializer,
@@ -98,6 +99,7 @@ def build_token_response(user):
 class LoginView(APIView):
     """Login API view"""
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={'request': request})

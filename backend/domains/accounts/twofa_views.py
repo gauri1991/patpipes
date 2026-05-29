@@ -11,11 +11,12 @@ import base64
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from .models import TwoFactorAuth, UserSettings
+from .throttling import OtpVerifyBurstThrottle, OtpVerifySustainedThrottle
 
 
 def get_totp_uri(user, secret):
@@ -288,6 +289,7 @@ def regenerate_backup_codes(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([OtpVerifyBurstThrottle, OtpVerifySustainedThrottle])
 def verify_2fa_login(request):
     """
     Verify 2FA during login process (called after password verification).

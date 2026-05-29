@@ -127,6 +127,12 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 20,
     'DATETIME_FORMAT': '%Y-%m-%dT%H:%M:%S.%fZ',
+    # Brute-force defense for auth endpoints (applied per-view, not globally).
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '10/min',
+        'otp_verify_burst': '6/min',
+        'otp_verify_sustained': '30/hour',
+    },
 }
 
 # JWT Configuration

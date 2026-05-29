@@ -19,6 +19,7 @@ db.sqlite3-journal
 *.sqlite3.backup.*
 data_backup.json
 /media
+backend/media/
 /staticfiles
 .coverage
 .pytest_cache/
@@ -46,3 +47,6 @@ scripts/*.log
 # Misc
 wet.txt
 work to be done.txt
+
+# Generated analysis exports
+patent_analysis_export.csv
