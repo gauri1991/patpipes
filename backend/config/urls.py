@@ -4,9 +4,10 @@ Professional API routing configuration
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, re_path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.static import serve as static_serve
 
 # API versioning
 api_v1_patterns = [
@@ -64,7 +65,17 @@ urlpatterns = [
     path('health/', include('domains.accounts.urls', namespace='health')),
 ]
 
-# Serve media files in development
+# Serve media files.
+# In production there is no nginx in front of gunicorn (see docker-compose.yml),
+# so Django itself must serve user-uploaded media — otherwise /media/* 404s and
+# evidence PDFs/screenshots fail to load. django.views.static.serve handles this
+# regardless of DEBUG. (Static assets still go through collectstatic; serve them
+# here too as a fallback when DEBUG is off.)
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+else:
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', static_serve, {'document_root': settings.MEDIA_ROOT}),
+        re_path(r'^static/(?P<path>.*)$', static_serve, {'document_root': settings.STATIC_ROOT}),
+    ]
