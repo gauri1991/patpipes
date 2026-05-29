@@ -390,10 +390,24 @@ class InfringementAIService:
             'key_factors': key_factors,
         }
 
-    def generate_claim_chart_narrative(self, claim_mapping: dict) -> str:
+    def generate_claim_chart_narrative(self, claim_mapping: dict, use_llm: bool = False) -> str:
         """
         Generate professional narrative for claim chart report.
+
+        Heuristic template by default. When use_llm=True AND the master switch is on,
+        drafts the narrative via the shared provider (gated, like the other methods).
         """
+        if use_llm:
+            prompt = (
+                "Write a concise, professional infringement claim-chart narrative for one "
+                "claim mapping. Return ONLY JSON: {\"narrative\": str}.\n\n"
+                f"{claim_mapping}"
+            )
+            data = _llm_json(prompt)
+            if isinstance(data, dict) and data.get('narrative'):
+                return str(data['narrative']).strip()
+            # fall through to heuristic template
+
         narrative = f"""
 Claim {claim_mapping.get('claim_number', 'N/A')} Analysis:
 

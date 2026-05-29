@@ -68,6 +68,46 @@ def _odp_case_match(case, patent, threshold=0.4):
     }
 
 
+def _ptab_cached(endpoint, patent_number, method_name, ttl_hours=24):
+    """Return a cached ODP PTAB response, fetching + caching on miss.
+
+    PTAB proceedings/decisions change rarely, so cache per (patent_number, endpoint) in
+    ODPCacheEntry to avoid re-hitting USPTO on every tab view.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from domains.analytics.models import ODPCacheEntry
+    from domains.analytics.uspto_odp_service import (
+        USPTOODPClient, USPTOODPTrialService, USPTOODPError,
+    )
+
+    cache_key = f'ptab:{patent_number}'
+    # Use updated_at (auto_now, refreshes on every save) for the TTL — fetched_at is
+    # auto_now_add and would never refresh when an existing entry is updated.
+    cutoff = timezone.now() - timedelta(hours=ttl_hours)
+    cached = (
+        ODPCacheEntry.objects
+        .filter(application_id=cache_key, endpoint=endpoint, updated_at__gte=cutoff)
+        .first()
+    )
+    if cached:
+        return Response(cached.response_data)
+
+    try:
+        svc = USPTOODPTrialService(USPTOODPClient())
+        query = {'q': patent_number, 'pagination': {'offset': 0, 'limit': 20}}
+        data = getattr(svc, method_name)(query)
+    except USPTOODPError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    if data is not None:
+        ODPCacheEntry.objects.update_or_create(
+            application_id=cache_key, endpoint=endpoint,
+            defaults={'response_data': data},
+        )
+    return Response(data)
+
+
 def _parse_claim_into_elements(claim_text):
     """Parse patent claim text into structured elements (preamble + body limitations).
 
@@ -637,35 +677,19 @@ class InfringementCaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def ptab_proceedings(self, request, pk=None):
-        """Search ODP PTAB proceedings related to the case's patent number."""
+        """Search ODP PTAB proceedings related to the case's patent number (cached)."""
         case = self.get_object()
-        patent_number = case.patent_number
-        if not patent_number:
+        if not case.patent_number:
             return Response({'error': 'Case has no patent_number for PTAB lookup'}, status=status.HTTP_400_BAD_REQUEST)
-
-        from domains.analytics.uspto_odp_service import USPTOODPClient, USPTOODPTrialService, USPTOODPError
-        try:
-            svc = USPTOODPTrialService(USPTOODPClient())
-            data = svc.search_proceedings({'q': patent_number, 'pagination': {'offset': 0, 'limit': 20}})
-            return Response(data)
-        except USPTOODPError as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return _ptab_cached('ptab_proceedings', case.patent_number, 'search_proceedings')
 
     @action(detail=True, methods=['get'])
     def ptab_decisions(self, request, pk=None):
-        """Search ODP PTAB decisions related to the case's patent number."""
+        """Search ODP PTAB decisions related to the case's patent number (cached)."""
         case = self.get_object()
-        patent_number = case.patent_number
-        if not patent_number:
+        if not case.patent_number:
             return Response({'error': 'Case has no patent_number for PTAB lookup'}, status=status.HTTP_400_BAD_REQUEST)
-
-        from domains.analytics.uspto_odp_service import USPTOODPClient, USPTOODPTrialService, USPTOODPError
-        try:
-            svc = USPTOODPTrialService(USPTOODPClient())
-            data = svc.search_decisions({'q': patent_number, 'pagination': {'offset': 0, 'limit': 20}})
-            return Response(data)
-        except USPTOODPError as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return _ptab_cached('ptab_decisions', case.patent_number, 'search_decisions')
 
     @action(detail=True, methods=['post'], url_path='auto-import-claims')
     def auto_import_claims(self, request, pk=None):
@@ -1044,6 +1068,25 @@ class EvidenceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+    def perform_destroy(self, instance):
+        """Delete the evidence and scrub its id from the JSON evidence_references lists on
+        the case's claim mappings and elements (those are id lists with no FK cascade)."""
+        evidence_id = str(instance.id)
+        case_id = instance.case_id
+        instance.delete()
+
+        for mapping in ClaimMapping.objects.filter(case_id=case_id):
+            refs = mapping.evidence_references or []
+            if evidence_id in refs:
+                mapping.evidence_references = [r for r in refs if r != evidence_id]
+                mapping.save(update_fields=['evidence_references', 'updated_at'])
+
+        for element in ClaimElement.objects.filter(claim_mapping__case_id=case_id):
+            refs = element.evidence_references or []
+            if evidence_id in refs:
+                element.evidence_references = [r for r in refs if r != evidence_id]
+                element.save(update_fields=['evidence_references', 'updated_at'])
 
     @action(detail=False, methods=['post'], url_path='suggest-from-url')
     def suggest_from_url(self, request):
@@ -1576,6 +1619,7 @@ class AIAnalysisViewSet(viewsets.ViewSet):
         """
         case_id = request.data.get('case_id')
         section = request.data.get('section', 'claim_chart')
+        use_llm = bool(request.data.get('use_llm', False))
 
         if not case_id:
             return Response(
@@ -1603,7 +1647,7 @@ class AIAnalysisViewSet(viewsets.ViewSet):
                 'limitations_met': cm.limitations_met,
                 'analysis_notes': cm.analysis_notes,
             }
-            narrative = ai_service.generate_claim_chart_narrative(mapping_data)
+            narrative = ai_service.generate_claim_chart_narrative(mapping_data, use_llm=use_llm)
             narratives.append({
                 'claim_number': cm.claim_number,
                 'narrative': narrative,
