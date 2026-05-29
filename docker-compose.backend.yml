@@ -17,6 +17,13 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      # External API keys — without these the container has no USPTO key (the DB-stored
+      # key is signed with SECRET_KEY and can't be unsigned when prod's SECRET_KEY differs),
+      # so claim auto-import and other ODP calls silently fail.
+      USPTO_ODP_API_KEY: ${USPTO_ODP_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LENS_API_KEY: ${LENS_API_KEY}
     volumes:
       - media_files:/app/media
       - static_files:/app/staticfiles
@@ -39,6 +46,10 @@ services:
       REDIS_URL: ${REDIS_URL}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      USPTO_ODP_API_KEY: ${USPTO_ODP_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LENS_API_KEY: ${LENS_API_KEY}
     volumes:
       - media_files:/app/media
     command: celery -A config worker --loglevel=info --concurrency=2
