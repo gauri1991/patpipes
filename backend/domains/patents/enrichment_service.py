@@ -494,6 +494,192 @@ def enrich_patent(patent, svc=None):
         return {'success': False, 'updated_fields': [], 'error': str(exc)[:500]}
 
 
+def _patent_number_candidates(raw):
+    """Yield plausible bare USPTO grant numbers from a raw patent identifier,
+    best-guess first.
+
+    Handles three real-world shapes:
+      * country prefix      — 'US8806222'      → '8806222'
+      * intact kind code    — 'US10077374B2'   → '10077374'   (letter + optional digit)
+      * stripped kind code  — 'US100773743'    → '10077374'    (upstream removed the
+                              kind-code LETTER but left its trailing digit attached;
+                              a 9+ digit string can't be a real grant number)
+    """
+    s = (raw or '').strip().upper()
+    if not s:
+        return []
+
+    cands = []
+    def add(x):
+        if x and x not in cands:
+            cands.append(x)
+
+    # Drop a leading 2-letter country code when it sits in front of the number.
+    body = re.sub(r'^[A-Z]{2}(?=[0-9])', '', s)
+
+    # A) Trailing kind code with its letter intact (e.g. '10077374B2', '8806222A1').
+    m = re.match(r'^(\d+)[A-Z]\d?$', body)
+    if m:
+        add(m.group(1))
+
+    # B) All digits as-is (correct for clean numbers like '8806222').
+    digits = re.sub(r'[^0-9]', '', body)
+    add(digits)
+
+    return cands
+
+
+def resolve_application_number(patent_number, svc=None):
+    """Resolve a granted patent number (e.g. 'US8806222') to its USPTO application
+    number via ODP search. ODP keys everything off the application number, so this
+    is required before enriching a record that only carries a patent number.
+
+    Tries each candidate form (see _patent_number_candidates) and returns the
+    applicationNumberText of the first whose ODP patentNumber matches exactly, or
+    None if nothing resolves.
+    """
+    candidates = _patent_number_candidates(patent_number)
+    if not candidates:
+        return None
+
+    if svc is None:
+        from domains.analytics.uspto_odp_service import USPTOODPClient, USPTOODPDetailService
+        svc = USPTOODPDetailService(USPTOODPClient())
+
+    for cand in candidates:
+        body = {
+            'q': f'applicationMetaData.patentNumber:{cand}',
+            'pagination': {'offset': 0, 'limit': 1},
+        }
+        data = svc.client.post('/patent/applications/search', body)
+        results = (data or {}).get('patentFileWrapperDataBag',
+                                   (data or {}).get('patentApplications', [])) or []
+        if not results:
+            continue
+        first = results[0] or {}
+        # Confirm the hit is exactly the candidate we queried (guard against loose matches).
+        hit_pat = _normalize_app_num((first.get('applicationMetaData') or {}).get('patentNumber', ''))
+        if hit_pat and hit_pat != cand:
+            continue
+        app_num = first.get('applicationNumberText')
+        if app_num:
+            if cand != candidates[0]:
+                logger.info('Resolved patent %r via candidate %r (app %s)', patent_number, cand, app_num)
+            return app_num
+
+    return None
+
+
+def enrich_patent_record_from_odp(patent_record, svc=None, force=False):
+    """Enrich a single analytics PatentRecord from USPTO ODP.
+
+    Flow: resolve patent number → application number → get_or_create the canonical
+    `Patent` row (so the enriched data is reusable platform-wide) → enrich it via the
+    shared `enrich_patent()` → hydrate the analytics PatentRecord's display fields so
+    the project table and AI scoring pipeline have real text to work with.
+
+    Returns dict: {success, updated_fields, error, patent_id, application_number}.
+    """
+    from domains.patents.models import Patent
+    from domains.analytics.uspto_odp_service import USPTOODPClient, USPTOODPDetailService
+
+    raw_data = patent_record.raw_data if isinstance(patent_record.raw_data, dict) else {}
+
+    # Skip already-enriched records unless forced (bulk callers only pass un-enriched ids).
+    if raw_data.get('_odp_enriched') and not force:
+        return {
+            'success': True, 'updated_fields': [], 'error': None,
+            'patent_id': patent_record.patent_id,
+            'application_number': raw_data.get('_odp_application_number'),
+            'skipped': True,
+        }
+
+    patent_number = (patent_record.patent_id or '').strip()
+    if not patent_number:
+        return {'success': False, 'updated_fields': [], 'error': 'Record has no patent number', 'patent_id': ''}
+
+    if svc is None:
+        svc = USPTOODPDetailService(USPTOODPClient())
+
+    # 1) Resolve application number
+    app_num = resolve_application_number(patent_number, svc=svc)
+    if not app_num:
+        return {
+            'success': False, 'updated_fields': [],
+            'error': f'No USPTO ODP match for patent number {patent_number}',
+            'patent_id': patent_number,
+        }
+
+    # 2) Canonical Patent row (shared across the platform), keyed by application number
+    patent, _ = Patent.objects.get_or_create(
+        application_number=_normalize_app_num(app_num),
+        defaults={'title': '', 'status': 'granted'},
+    )
+
+    # 3) Enrich the canonical row via the shared engine
+    result = enrich_patent(patent, svc=svc)
+    if not result.get('success'):
+        return {
+            'success': False, 'updated_fields': [],
+            'error': result.get('error') or 'ODP enrichment failed',
+            'patent_id': patent_number, 'application_number': app_num,
+        }
+
+    # 4) Hydrate the analytics PatentRecord from the canonical Patent so the table
+    #    and AI scoring see real data. Only fill blanks — never clobber analyst edits.
+    rec_fields = []
+    patent.refresh_from_db()
+
+    if patent.title and not patent_record.title:
+        patent_record.title = patent.title
+        rec_fields.append('title')
+    if patent.abstract and not patent_record.abstract:
+        patent_record.abstract = patent.abstract
+        rec_fields.append('abstract')
+    if patent.assignees and not patent_record.assignee:
+        patent_record.assignee = ', '.join(str(a) for a in patent.assignees if a)
+        rec_fields.append('assignee')
+    if patent.inventors and not patent_record.inventor:
+        patent_record.inventor = ', '.join(str(i) for i in patent.inventors if i)
+        rec_fields.append('inventor')
+    if patent.filing_date and not patent_record.filing_date:
+        patent_record.filing_date = patent.filing_date
+        rec_fields.append('filing_date')
+    if patent.grant_date and not patent_record.grant_date:
+        patent_record.grant_date = patent.grant_date
+        rec_fields.append('grant_date')
+
+    # Claims: Patent.claims is a list of {number, text}; PatentRecord stores both a
+    # flat text blob and a structured list.
+    if patent.claims and not patent_record.claims:
+        claims_list = patent.claims if isinstance(patent.claims, list) else []
+        patent_record.claims = '\n\n'.join(
+            f"{c.get('number', '')}. {c.get('text', '')}".strip() if isinstance(c, dict) else str(c)
+            for c in claims_list
+        )
+        patent_record.claims_structure = claims_list
+        patent_record.claims_count = len(claims_list)
+        rec_fields.extend(['claims', 'claims_structure', 'claims_count'])
+
+    # Persist enrichment markers + link to the canonical Patent (local "enriched" flag).
+    new_raw = dict(raw_data)
+    new_raw['_odp_enriched'] = True
+    new_raw['_odp_application_number'] = app_num
+    new_raw['_canonical_patent_id'] = str(patent.id)
+    patent_record.raw_data = new_raw
+    rec_fields.append('raw_data')
+
+    patent_record.save(update_fields=list(set(rec_fields)) + ['updated_at'])
+
+    return {
+        'success': True,
+        'updated_fields': result.get('updated_fields', []),
+        'error': None,
+        'patent_id': patent.patent_number or patent_number,
+        'application_number': app_num,
+    }
+
+
 def unenriched_lens_queryset(portfolio=None, filters=None):
     """
     Build a queryset of patents eligible for Lens enrichment.

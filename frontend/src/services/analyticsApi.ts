@@ -1264,6 +1264,39 @@ class AnalyticsApiService extends ApiClient {
     });
   }
 
+  async importDatasetFromDataset(projectId: string, sourceDatasetId: string, name?: string): Promise<ApiResponse<PatentDataset>> {
+    return this.fetchWithAuth<PatentDataset>('/analytics/api/datasets/import-from-dataset/', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId, source_dataset_id: sourceDatasetId, name }),
+    });
+  }
+
+  // Upload a file (Excel/CSV) as a new dataset in the project and process it synchronously.
+  async addFileToProject(projectId: string, file: File, name?: string): Promise<ApiResponse<{ total_patents: number; dataset_id: string }>> {
+    const createRes = await this.createDataset({
+      name: name || file.name.replace(/\.[^.]+$/, ''),
+      description: `Uploaded from ${file.name}`,
+      data_source: 'manual_upload',
+      data_file: file,
+      project: projectId,
+    });
+    if (!createRes.success || !createRes.data) {
+      return { success: false, error: createRes.error ?? 'Failed to create dataset from file' };
+    }
+
+    const datasetId = (createRes.data as any).id as string;
+    const processRes = await this.processDataset(datasetId);
+    if (!processRes.success) {
+      return { success: false, error: processRes.error ?? 'Failed to process uploaded file' };
+    }
+
+    const totalPatents =
+      (processRes.data as any)?.processed_records ??
+      (createRes.data as any)?.total_patents ??
+      0;
+    return { success: true, data: { total_patents: totalPatents, dataset_id: datasetId } };
+  }
+
   // Advanced Analytics
   async analyzeLandscape(projectId: string): Promise<ApiResponse<LandscapeAnalysis>> {
     return this.fetchWithAuth<LandscapeAnalysis>(`/analytics/api/projects/${projectId}/analyze_landscape/`, {
@@ -1407,12 +1440,22 @@ class AnalyticsApiService extends ApiClient {
     );
   }
 
+  async enrichFromODP(
+    projectId: string,
+    patentRecordIds: string[]
+  ): Promise<ApiResponse<{ enriched_count: number; results: Array<{ patent_record_id: string; success: boolean; error?: string }> }>> {
+    return this.fetchWithAuth(
+      `/analytics/api/projects/${projectId}/enrich-from-odp/`,
+      { method: 'POST', body: JSON.stringify({ patent_record_ids: patentRecordIds }) }
+    );
+  }
+
   async getBundleAttributes(
     projectId: string,
     limit = 50,
     offset = 0
-  ): Promise<ApiResponse<{ count: number; results: BundleAttributes[] }>> {
-    return this.fetchWithAuth<{ count: number; results: BundleAttributes[] }>(
+  ): Promise<ApiResponse<{ count: number; results: BundleAttributes[]; attribute_completeness?: AttributeCompleteness }>> {
+    return this.fetchWithAuth<{ count: number; results: BundleAttributes[]; attribute_completeness?: AttributeCompleteness }>(
       `/analytics/api/projects/${projectId}/bundle_attributes/?limit=${limit}&offset=${offset}`
     );
   }
@@ -1563,11 +1606,21 @@ class AnalyticsApiService extends ApiClient {
 
 // ── Bundle Analysis Types ──────────────────────────────────────────────────
 
+export interface AttributeCompleteness {
+  total: number;
+  with_ai_attributes: number;
+  with_manual_attributes: number;
+  pct_complete: number;
+  pct_a_complete: number;
+  taxonomy_depth_pct?: number;
+}
+
 export interface BundleAttributes {
   id: string;
   patent_record_id: string;
   patent_id: string;
   title: string;
+  enriched?: boolean;
   // Group A
   a1_primary_domain: string;
   a2_tech_subcategory: string;

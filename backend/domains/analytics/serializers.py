@@ -485,12 +485,13 @@ class TemplateSerializer(serializers.ModelSerializer):
 class PatentBundleAttributesSerializer(serializers.ModelSerializer):
     patent_id = serializers.SerializerMethodField()
     title = serializers.SerializerMethodField()
+    enriched = serializers.SerializerMethodField()
 
     class Meta:
         from .models import PatentBundleAttributes
         model = PatentBundleAttributes
         fields = [
-            'id', 'patent_record_id', 'patent_id', 'title',
+            'id', 'patent_record_id', 'patent_id', 'title', 'enriched',
             # Group A (4-level hierarchy: A1→A2→A2.1→A2.2, then A3/A4/A5)
             'a1_primary_domain', 'a2_tech_subcategory',
             'a21_tech_detail', 'a22_tech_niche',
@@ -529,6 +530,13 @@ class PatentBundleAttributesSerializer(serializers.ModelSerializer):
             return obj.patent_record.title or ''
         except Exception:
             return ''
+
+    def get_enriched(self, obj):
+        try:
+            raw = obj.patent_record.raw_data or {}
+            return bool(raw.get('_odp_enriched'))
+        except Exception:
+            return False
 
 
 class BundlingConfigurationSerializer(serializers.ModelSerializer):

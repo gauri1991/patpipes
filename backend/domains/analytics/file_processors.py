@@ -15,6 +15,16 @@ from .column_mapping_service import column_mapping_service
 
 logger = logging.getLogger(__name__)
 
+# Matches bare patent/publication numbers like "US8806222", "EP1234567B1", "8806222".
+_PATENT_NUMBER_RE = re.compile(r'^[A-Z]{0,2}[-\s]?\d{5,}(?:[-\s]?[A-Z]\d?)?$', re.IGNORECASE)
+
+
+def _looks_like_patent_number(value: Any) -> bool:
+    """True when a cell/header value looks like a bare patent number."""
+    if value is None:
+        return False
+    return bool(_PATENT_NUMBER_RE.match(str(value).strip().replace(',', '')))
+
 
 class PatentFileProcessor:
     """Process uploaded patent files and extract records"""
@@ -67,7 +77,14 @@ class PatentFileProcessor:
                 df = pd.read_excel(file_path, engine='openpyxl')
             except:
                 df = pd.read_excel(file_path, engine='xlrd')
-            
+
+            if self._is_headerless_patent_list(df):
+                self.log("Detected headerless single-column patent list — re-reading without header")
+                try:
+                    df = pd.read_excel(file_path, engine='openpyxl', header=None, names=['patent number'])
+                except:
+                    df = pd.read_excel(file_path, engine='xlrd', header=None, names=['patent number'])
+
             self.log(f"Successfully read Excel file: {len(df)} rows, {len(df.columns)} columns")
             return df
             
@@ -82,12 +99,22 @@ class PatentFileProcessor:
         for encoding in encodings:
             try:
                 df = pd.read_csv(file_path, encoding=encoding)
+                if self._is_headerless_patent_list(df):
+                    self.log("Detected headerless single-column patent list — re-reading without header")
+                    df = pd.read_csv(file_path, encoding=encoding, header=None, names=['patent number'])
                 self.log(f"Successfully read CSV file with {encoding} encoding: {len(df)} rows, {len(df.columns)} columns")
                 return df
             except UnicodeDecodeError:
                 continue
-        
+
         raise ValueError("Failed to read CSV file with any supported encoding")
+
+    @staticmethod
+    def _is_headerless_patent_list(df: pd.DataFrame) -> bool:
+        """A single-column file whose 'header' is itself a patent number means the
+        source had no header row — pandas consumed the first data value as the column
+        name. Detect that so we can re-read with header=None and keep every patent."""
+        return df.shape[1] == 1 and _looks_like_patent_number(df.columns[0])
     
     def process_dataframe(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Process dataframe and create patent records"""

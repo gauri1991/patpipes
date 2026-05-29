@@ -1077,24 +1077,46 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def run_bundle_analysis(self, request, pk=None):
-        """Dispatch bundle analysis to Celery, or run synchronously if broker is unavailable."""
-        from ..tasks import run_bundle_analysis_task
+        """Run bundle analysis and persist the result so it can be pulled later
+        without re-running.
+
+        Dispatches to Celery only when a worker is actually available to execute the
+        task; otherwise (broker down, or up but no worker) it runs synchronously and
+        persists the result directly. Either way the result lands in
+        project.analysis_results['bundle_analysis'] and is served by bundle-analysis-result.
+        """
+        from ..tasks import run_bundle_analysis_task, _persist_and_cache
         from ..algorithms import run_bundle_analysis as _run_sync
         project = self.get_object()
         kwargs = self._bundle_algo_kwargs(request)
+
+        # Only queue to Celery if a worker will actually pick it up — otherwise the task
+        # sits in the broker forever and nothing is ever persisted.
+        worker_available = False
         try:
-            task = run_bundle_analysis_task.delay(str(project.id), kwargs)
-            # Persist the active task_id so the frontend can reconnect after a page reload
-            ar = project.analysis_results or {}
-            ar['bundle_analysis'] = {**(ar.get('bundle_analysis') or {}), 'task_id': task.id, 'task_status': 'queued'}
-            project.analysis_results = ar
-            project.save(update_fields=['analysis_results'])
-            return Response({'task_id': task.id, 'status': 'queued', 'analysis_type': 'bundle_analysis'}, status=status.HTTP_202_ACCEPTED)
+            from config.celery import app as celery_app
+            worker_available = bool(celery_app.control.ping(timeout=1.0))
         except Exception:
-            result = _run_sync(str(project.id), **(kwargs or {}))
-            if 'error' in result:
-                return Response(result, status=status.HTTP_400_BAD_REQUEST)
-            return Response(result)
+            worker_available = False
+
+        if worker_available:
+            try:
+                task = run_bundle_analysis_task.delay(str(project.id), kwargs)
+                # Persist the active task_id so the frontend can reconnect after a page reload
+                ar = project.analysis_results or {}
+                ar['bundle_analysis'] = {**(ar.get('bundle_analysis') or {}), 'task_id': task.id, 'task_status': 'queued'}
+                project.analysis_results = ar
+                project.save(update_fields=['analysis_results'])
+                return Response({'task_id': task.id, 'status': 'queued', 'analysis_type': 'bundle_analysis'}, status=status.HTTP_202_ACCEPTED)
+            except Exception:
+                pass  # fall through to synchronous execution
+
+        # Synchronous path: run now and PERSIST so subsequent loads can pull it.
+        result = _run_sync(str(project.id), **(kwargs or {}))
+        if 'error' in result:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        _persist_and_cache(str(project.id), 'bundle_analysis', result)
+        return Response(result)
 
     @action(detail=True, methods=['get'], url_path='bundle-analysis-result')
     def bundle_analysis_result(self, request, pk=None):
@@ -1181,6 +1203,41 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
         task = run_technology_classification_task.delay(str(project.id), patent_record_ids, force)
         return Response({'task_id': task.id, 'status': 'queued'}, status=status.HTTP_202_ACCEPTED)
 
+    @action(detail=True, methods=['post'], url_path='enrich-from-odp')
+    def enrich_from_odp(self, request, pk=None):
+        """Enrich project patent records from USPTO ODP.
+
+        Writes canonical data into the platform-wide `Patent` table (reusable
+        everywhere) and hydrates the analytics PatentRecord so the project table and
+        AI scoring see real data. Runs synchronously over the given record ids; the
+        frontend drives bulk runs one id at a time for live progress.
+        """
+        from ..models import PatentDataset, PatentRecord
+        from domains.patents.enrichment_service import enrich_patent_record_from_odp
+        from domains.analytics.uspto_odp_service import USPTOODPClient, USPTOODPDetailService
+
+        project = self.get_object()
+        record_ids = request.data.get('patent_record_ids') or []
+
+        dataset_ids = PatentDataset.objects.filter(project=project).values_list('id', flat=True)
+        qs = PatentRecord.objects.filter(dataset_id__in=dataset_ids)
+        if record_ids:
+            qs = qs.filter(id__in=record_ids)
+
+        # Build the ODP service once and reuse across records (shares the HTTP client/cache).
+        svc = USPTOODPDetailService(USPTOODPClient())
+
+        results = []
+        for rec in qs:
+            try:
+                r = enrich_patent_record_from_odp(rec, svc=svc)
+            except Exception as exc:  # never let one bad record abort the batch
+                r = {'success': False, 'error': str(exc)[:500]}
+            results.append({'patent_record_id': str(rec.id), **r})
+
+        enriched_count = sum(1 for r in results if r.get('success'))
+        return Response({'enriched_count': enriched_count, 'results': results})
+
     @action(detail=True, methods=['get', 'patch'])
     def bundle_attributes(self, request, pk=None):
         """GET all PatentBundleAttributes for project patents. PATCH to update a patent's attributes."""
@@ -1193,13 +1250,39 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
         if request.method == 'GET':
             # Gather all patent_record ids for this project's datasets
             dataset_ids = PatentDataset.objects.filter(project=project).values_list('id', flat=True)
-            record_ids = PatentRecord.objects.filter(dataset_id__in=dataset_ids).values_list('id', flat=True)
+            record_ids = list(
+                PatentRecord.objects.filter(dataset_id__in=dataset_ids).values_list('id', flat=True)
+            )
+
+            # Seed an (empty, unscored) attribute row for any record that lacks one so
+            # freshly imported patents show up in the Attributes table immediately and the
+            # bulk Score/Classify actions have IDs to operate on.
+            existing_ids = set(
+                PatentBundleAttributes.objects
+                .filter(patent_record_id__in=record_ids)
+                .values_list('patent_record_id', flat=True)
+            )
+            missing_ids = [rid for rid in record_ids if rid not in existing_ids]
+            if missing_ids:
+                PatentBundleAttributes.objects.bulk_create(
+                    [PatentBundleAttributes(patent_record_id=rid) for rid in missing_ids],
+                    batch_size=500,
+                    ignore_conflicts=True,
+                )
+
             qs = PatentBundleAttributes.objects.filter(patent_record_id__in=record_ids).select_related('patent_record')
             total = qs.count()
+
+            # Live completeness over ALL rows (not just this page) so the UI's Group A /
+            # H&I progress refreshes immediately after Classify All / Score All — without
+            # needing a full bundle-analysis re-run.
+            from ..algorithms.bundling import _compute_completeness
+            completeness = _compute_completeness(list(qs.values()))
+
             limit = min(int(request.query_params.get('limit', 50)), 200)
             offset = int(request.query_params.get('offset', 0))
             serializer = PatentBundleAttributesSerializer(qs[offset:offset + limit], many=True)
-            return Response({'count': total, 'results': serializer.data})
+            return Response({'count': total, 'results': serializer.data, 'attribute_completeness': completeness})
 
         # PATCH
         patent_record_id = request.data.get('patent_record_id')

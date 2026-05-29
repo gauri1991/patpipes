@@ -36,6 +36,7 @@ import {
   BundleQualityRow,
   BundleConfiguration,
   BundleAttributes,
+  AttributeCompleteness,
   PatentRecordText,
   SalesPackage,
   SalesPackageCreateData,
@@ -349,6 +350,8 @@ export default function SalesPackageProjectDetail() {
   const [attrOffset, setAttrOffset] = useState(0);
   const [attrSearch, setAttrSearch] = useState('');
   const [attrLoading, setAttrLoading] = useState(false);
+  // Live Group A / H&I completeness, refreshed on every attribute load (Classify/Score All).
+  const [liveCompleteness, setLiveCompleteness] = useState<AttributeCompleteness | null>(null);
   const [editingAttr, setEditingAttr] = useState<BundleAttributes | null>(null);
   const [viewingAttr, setViewingAttr] = useState<BundleAttributes | null>(null);
   const [patentText, setPatentText] = useState<PatentRecordText | null>(null);
@@ -357,6 +360,7 @@ export default function SalesPackageProjectDetail() {
   const [selectedAttrIds, setSelectedAttrIds] = useState<Set<string>>(new Set());
   const [aiScoring, setAiScoring] = useState(false);
   const [groupAScoring, setGroupAScoring] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   // Live progress for bulk operations
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; label: string } | null>(null);
 
@@ -458,6 +462,7 @@ export default function SalesPackageProjectDetail() {
         setAttributes(offset === 0 ? incoming : prev => [...prev, ...incoming]);
         setAttrTotal(res.data.count);
         setAttrOffset(offset + res.data.results.length);
+        if (res.data.attribute_completeness) setLiveCompleteness(res.data.attribute_completeness);
       }
     } finally {
       setAttrLoading(false);
@@ -595,6 +600,40 @@ export default function SalesPackageProjectDetail() {
     await loadAttributes(0);
   };
 
+  // ── USPTO ODP enrichment ──────────────────────────────────────────────────
+  // Pulls real patent data (title, abstract, claims, dates, assignee) from USPTO
+  // ODP into the platform-wide Patent table and hydrates this project's records.
+  const enrichSingleFromODP = async (recId: string) => {
+    if (!projectId) return;
+    setBulkProgress({ done: 0, total: 1, label: 'Enriching from USPTO ODP…' });
+    const res = await analyticsApi.enrichFromODP(projectId, [recId]);
+    setBulkProgress(null);
+    if (res.success && (res.data?.enriched_count ?? 0) === 0) {
+      const err = res.data?.results?.[0]?.error;
+      if (err) alert(`Enrichment failed: ${err}`);
+    }
+    await loadAttributes(0);
+  };
+
+  const enrichAllFromODP = async () => {
+    if (!projectId || enriching) return;
+    setEnriching(true);
+    // Collect un-enriched patent record IDs across the project.
+    const res = await analyticsApi.getBundleAttributes(projectId, 200, 0);
+    const ids = res.success && res.data
+      ? res.data.results.filter(a => !a.enriched).map(a => a.patent_record_id)
+      : [];
+    await runBulkWithProgress(
+      ids,
+      'Enriching patents from USPTO ODP',
+      (id) => analyticsApi.enrichFromODP(projectId, [id]),
+    );
+    setEnriching(false);
+  };
+
+  // Count of patents not yet enriched (from currently loaded rows).
+  const unenrichedCount = attributes.filter(a => !a.enriched).length;
+
   // ── Bundle explorer — get patents in selected bundle ──────────────────────
   useEffect(() => {
     if (!selectedBundle || !result) { setBundlePatents([]); return; }
@@ -707,7 +746,9 @@ export default function SalesPackageProjectDetail() {
 
   // ── Derived stats ─────────────────────────────────────────────────────────
   const totalPatents = result?.total_patents ?? attrTotal;
-  const completeness = result?.attribute_completeness;
+  // Prefer live completeness (refreshed after Classify/Score All) over the snapshot
+  // baked into the last bundle-analysis result.
+  const completeness = liveCompleteness ?? result?.attribute_completeness;
   const qualifiedBundles = result?.qualified_bundles ?? [];
   const scorecard = result?.quality_scorecard ?? [];
   const aiScoredCount = completeness?.with_ai_attributes ?? 0;
@@ -881,6 +922,28 @@ export default function SalesPackageProjectDetail() {
                   </div>
                 )}
 
+                {/* USPTO ODP enrichment banner */}
+                {projectId && unenrichedCount > 0 && (
+                  <div className="flex items-center gap-4 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                    <Globe className="w-5 h-5 text-amber-600 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-amber-800">
+                        {unenrichedCount} patent{unenrichedCount === 1 ? '' : 's'} not yet enriched
+                      </p>
+                      <p className="text-xs text-amber-600 mt-0.5">Pull real title, abstract, claims, dates & assignee from USPTO ODP — saved to the platform-wide patent store</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={enrichAllFromODP}
+                      disabled={enriching}
+                      className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+                    >
+                      {enriching ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Globe className="w-3 h-3 mr-1" />}
+                      Enrich All
+                    </Button>
+                  </div>
+                )}
+
                 {/* Group A classification banner */}
                 {projectId && totalPatents > 0 && pctAComplete < 100 && (
                   <div className="flex items-center gap-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
@@ -1003,6 +1066,17 @@ export default function SalesPackageProjectDetail() {
                               </td>
                               <td className="px-4 py-2 text-right" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-end gap-1">
+                                  {attr.enriched ? (
+                                    <span title="Enriched from USPTO ODP" className="inline-flex items-center text-green-600 px-1">
+                                      <Check className="w-3.5 h-3.5" />
+                                    </span>
+                                  ) : (
+                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                                      title="Enrich from USPTO ODP"
+                                      onClick={() => enrichSingleFromODP(attr.patent_record_id)}>
+                                      <Globe className="w-3 h-3 mr-1" />Enrich
+                                    </Button>
+                                  )}
                                   <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                                     title="Classify technology domain (Group A)"
                                     onClick={() => classifySingleGroupA(attr.patent_record_id)}>
