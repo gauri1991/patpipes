@@ -338,8 +338,9 @@ class InfringementApiService extends ApiClient {
     patent_number?: string;
     accused_party_name?: string;
     search?: string;
-    page?: number;
-    page_size?: number;
+    ordering?: string;   // DRF OrderingFilter, e.g. '-created_at'
+    limit?: number;      // DRF LimitOffsetPagination
+    offset?: number;
   }): Promise<ApiResponse<InfringementCase[]>> {
     return this.get<InfringementCase[]>(`${this.BASE_PATH}/cases/`, { params });
   }

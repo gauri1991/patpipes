@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Plus,
@@ -31,23 +31,28 @@ export default function InfringementDashboard() {
   const [riskFilter, setRiskFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [analysisTypeFilter, setAnalysisTypeFilter] = useState('');
+  const [ordering, setOrdering] = useState('-created_at');
+  const [offset, setOffset] = useState(0);
+  const PAGE_SIZE = 20;
 
-  const { cases, loading: casesLoading, refresh: refetchCases } = useInfringementCases({
-    search: searchQuery,
+  // Any filter/search/sort change resets to the first page.
+  useEffect(() => {
+    setOffset(0);
+  }, [searchQuery, riskFilter, statusFilter, analysisTypeFilter, ordering]);
+
+  const { cases, count, loading: casesLoading, refresh: refetchCases } = useInfringementCases({
+    search: searchQuery || undefined,
     risk_level: riskFilter || undefined,
     status: statusFilter || undefined,
     analysis_type: analysisTypeFilter || undefined,
+    ordering,
+    limit: PAGE_SIZE,
+    offset,
   });
   const { stats, loading: statsLoading } = useInfringementDashboard();
 
-  const filteredCases = searchQuery
-    ? cases.filter(
-        (c) =>
-          c.case_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.patent_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.accused_product_name.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : cases;
+  // Server already applies search + filters + ordering + pagination.
+  const filteredCases = cases;
 
   const riskChartData = [
     { name: 'Critical', value: stats?.cases_by_risk?.critical || 0, color: '#ef4444' },
@@ -172,6 +177,7 @@ export default function InfringementDashboard() {
           <SimplifiedCasesTab
             cases={filteredCases}
             casesLoading={casesLoading}
+            count={count}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             statusFilter={statusFilter}
@@ -180,6 +186,11 @@ export default function InfringementDashboard() {
             setRiskFilter={setRiskFilter}
             analysisTypeFilter={analysisTypeFilter}
             setAnalysisTypeFilter={setAnalysisTypeFilter}
+            ordering={ordering}
+            setOrdering={setOrdering}
+            offset={offset}
+            setOffset={setOffset}
+            pageSize={PAGE_SIZE}
             onRefresh={refetchCases}
           />
         </TabsContent>

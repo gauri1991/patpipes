@@ -15,3 +15,4 @@ export { EvidenceUploadDialog } from './EvidenceUploadDialog';
 export { RiskAssessmentDialog } from './RiskAssessmentDialog';
 export { StatusChangeDialog } from './StatusChangeDialog';
 export { EditCaseDialog } from './EditCaseDialog';
+export { ListPagination } from './ListPagination';

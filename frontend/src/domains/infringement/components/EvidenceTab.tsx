@@ -36,6 +36,7 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
   const [suggestDialogOpen, setSuggestDialogOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [sort, setSort] = useState('-relevance');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const evidenceTypes = useMemo(
@@ -45,7 +46,7 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return evidence.filter((e) => {
+    const rows = evidence.filter((e) => {
       if (typeFilter !== 'all' && e.evidence_type !== typeFilter) return false;
       if (!q) return true;
       return (
@@ -53,7 +54,15 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
         (e.description || '').toLowerCase().includes(q)
       );
     });
-  }, [evidence, search, typeFilter]);
+    const cmp: Record<string, (a: typeof rows[number], b: typeof rows[number]) => number> = {
+      '-relevance': (a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0),
+      'relevance': (a, b) => (a.relevance_score ?? 0) - (b.relevance_score ?? 0),
+      '-created': (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
+      'created': (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
+      'title': (a, b) => (a.title || '').localeCompare(b.title || ''),
+    };
+    return [...rows].sort(cmp[sort] || cmp['-relevance']);
+  }, [evidence, search, typeFilter, sort]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -125,6 +134,18 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
             {evidenceTypes.map((t) => (
               <option key={t} value={t}>{getEvidenceTypeLabel(t)}</option>
             ))}
+          </select>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            aria-label="Sort evidence"
+          >
+            <option value="-relevance">Relevance (high→low)</option>
+            <option value="relevance">Relevance (low→high)</option>
+            <option value="-created">Newest first</option>
+            <option value="created">Oldest first</option>
+            <option value="title">Title (A→Z)</option>
           </select>
         </div>
       )}

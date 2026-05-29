@@ -21,10 +21,12 @@ export function useInfringementCases(params?: {
   patent_number?: string;
   accused_party_name?: string;
   search?: string;
-  page?: number;
-  page_size?: number;
+  ordering?: string;
+  limit?: number;
+  offset?: number;
 }) {
   const [cases, setCases] = useState<InfringementCase[]>([]);
+  const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,8 +38,9 @@ export function useInfringementCases(params?: {
     params?.patent_number,
     params?.accused_party_name,
     params?.search,
-    params?.page,
-    params?.page_size
+    params?.ordering,
+    params?.limit,
+    params?.offset
   ]);
 
   const fetchCases = useCallback(async () => {
@@ -50,6 +53,7 @@ export function useInfringementCases(params?: {
         const data = response.data as any;
         const casesList = Array.isArray(data) ? data : (data.results ?? [data]);
         setCases(casesList);
+        setCount(Array.isArray(data) ? data.length : (data.count ?? casesList.length));
       } else {
         throw new Error(response.error || 'Failed to fetch cases');
       }
@@ -133,6 +137,7 @@ export function useInfringementCases(params?: {
 
   return {
     cases,
+    count,
     loading,
     error,
     refresh: fetchCases,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Plus,
   FileText,
@@ -52,6 +52,18 @@ export function ReportsTab({ caseId, caseName }: ReportsTabProps) {
   const [reportTitle, setReportTitle] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [creating, setCreating] = useState(false);
+  const [sort, setSort] = useState('-created');
+
+  const sortedReports = useMemo(() => {
+    const cmp: Record<string, (a: typeof reports[number], b: typeof reports[number]) => number> = {
+      '-created': (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
+      'created': (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
+      'status': (a, b) => (a.status || '').localeCompare(b.status || ''),
+      'type': (a, b) => (a.report_type || '').localeCompare(b.report_type || ''),
+      'title': (a, b) => (a.title || '').localeCompare(b.title || ''),
+    };
+    return [...reports].sort(cmp[sort] || cmp['-created']);
+  }, [reports, sort]);
 
   const handleCreateReport = async () => {
     if (!reportTitle) return;
@@ -99,10 +111,26 @@ export function ReportsTab({ caseId, caseName }: ReportsTabProps) {
             Generate and manage infringement analysis reports
           </p>
         </div>
-        <Button onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Generate Report
-        </Button>
+        <div className="flex items-center gap-2">
+          {reports.length > 0 && (
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              aria-label="Sort reports"
+            >
+              <option value="-created">Newest first</option>
+              <option value="created">Oldest first</option>
+              <option value="status">Status</option>
+              <option value="type">Type</option>
+              <option value="title">Title (A→Z)</option>
+            </select>
+          )}
+          <Button onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Generate Report
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -123,7 +151,7 @@ export function ReportsTab({ caseId, caseName }: ReportsTabProps) {
         </Card>
       ) : (
         <div className="space-y-3">
-          {reports.map((report) => (
+          {sortedReports.map((report) => (
             <Card key={report.id}>
               <CardContent className="py-4">
                 <div className="flex items-start justify-between">

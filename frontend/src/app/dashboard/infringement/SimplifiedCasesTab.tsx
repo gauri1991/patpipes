@@ -33,11 +33,13 @@ import {
 } from '@/components/ui/popover';
 import { InfringementCase } from '@/services/infringementApi';
 import { getStatusColor, getRiskColor, getAnalysisTypeColor } from '@/domains/infringement/utils';
+import { ListPagination } from '@/domains/infringement/components';
 import { useState } from 'react';
 
 interface SimplifiedCasesTabProps {
   cases: InfringementCase[];
   casesLoading: boolean;
+  count: number;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   statusFilter: string;
@@ -46,12 +48,28 @@ interface SimplifiedCasesTabProps {
   setRiskFilter: (r: string) => void;
   analysisTypeFilter: string;
   setAnalysisTypeFilter: (t: string) => void;
+  ordering: string;
+  setOrdering: (o: string) => void;
+  offset: number;
+  setOffset: (o: number) => void;
+  pageSize: number;
   onRefresh: () => void;
 }
+
+// label → DRF ordering value (OrderingFilter on the viewset).
+const SORT_OPTIONS: [string, string][] = [
+  ['Newest first', '-created_at'],
+  ['Oldest first', 'created_at'],
+  ['Recently updated', '-updated_at'],
+  ['Likelihood (high→low)', '-infringement_likelihood'],
+  ['Likelihood (low→high)', 'infringement_likelihood'],
+  ['Risk (high→low)', '-risk_level'],
+];
 
 export function SimplifiedCasesTab({
   cases,
   casesLoading,
+  count,
   searchQuery,
   setSearchQuery,
   statusFilter,
@@ -60,6 +78,11 @@ export function SimplifiedCasesTab({
   setRiskFilter,
   analysisTypeFilter,
   setAnalysisTypeFilter,
+  ordering,
+  setOrdering,
+  offset,
+  setOffset,
+  pageSize,
   onRefresh,
 }: SimplifiedCasesTabProps) {
   const router = useRouter();
@@ -80,7 +103,7 @@ export function SimplifiedCasesTab({
           <div>
             <CardTitle>All Infringement Cases</CardTitle>
             <CardDescription>
-              {cases.length} case{cases.length !== 1 ? 's' : ''} found
+              {count} case{count !== 1 ? 's' : ''} found
             </CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={onRefresh}>
@@ -100,6 +123,19 @@ export function SimplifiedCasesTab({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground hidden sm:inline">Sort</span>
+            <Select value={ordering} onValueChange={setOrdering}>
+              <SelectTrigger className="w-[190px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map(([label, value]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Popover open={filterOpen} onOpenChange={setFilterOpen}>
             <PopoverTrigger asChild>
@@ -243,6 +279,13 @@ export function SimplifiedCasesTab({
             ))
           )}
         </div>
+
+        <ListPagination
+          count={count}
+          offset={offset}
+          limit={pageSize}
+          onOffsetChange={setOffset}
+        />
       </CardContent>
     </Card>
   );
