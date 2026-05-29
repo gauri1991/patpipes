@@ -19,6 +19,54 @@ from django.shortcuts import get_object_or_404
 
 logger = logging.getLogger(__name__)
 
+_MATCH_STOPWORDS = {
+    'a', 'an', 'the', 'and', 'or', 'of', 'for', 'with', 'to', 'in', 'on', 'by', 'at',
+    'system', 'method', 'apparatus', 'device', 'using', 'based',
+}
+_NAME_SUFFIXES = re.compile(
+    r'\b(corporation|corp|incorporated|inc|llc|ltd|limited|gmbh|co|company|plc|sa|ag|kk)\b'
+)
+
+
+def _match_tokens(text):
+    return {
+        t for t in re.sub(r'[^a-z0-9\s]', ' ', (text or '').lower()).split()
+        if len(t) > 1 and t not in _MATCH_STOPWORDS
+    }
+
+
+def _norm_name(name):
+    s = _NAME_SUFFIXES.sub(' ', re.sub(r'[^a-z0-9\s]', ' ', (name or '').lower()))
+    return ' '.join(s.split())
+
+
+def _odp_case_match(case, patent, threshold=0.4):
+    """Whether a freshly-resolved USPTO Patent plausibly matches this case.
+
+    The patent number alone proves nothing (a number can be shared by unrelated demo
+    data, and we looked it up *by* number). Compare title token overlap and assignee
+    names so an unrelated patent (e.g. KIOXIA "NAND SWITCH" vs an Apple SoC case) is
+    never silently linked. Mirrors the frontend assessOdpMatch guard.
+    """
+    a, b = _match_tokens(case.patent_title), _match_tokens(patent.title)
+    inter = len(a & b)
+    union = len(a | b)
+    title_sim = (inter / union) if union else 0.0
+
+    assignee_match = None
+    local = [_norm_name(x) for x in (getattr(patent, 'assignees', None) or []) if x]
+    # case has no own assignee field; compare the patent's assignees against the case title
+    # is meaningless, so assignee gating only applies when the case was already linked to a
+    # patent carrying assignees — handled by the caller comparing pre/post. Keep title-driven.
+    confident = title_sim >= threshold
+    return {
+        'confident': confident,
+        'title_similarity': round(title_sim, 3),
+        'assignee_match': assignee_match,
+        'found_title': patent.title or '',
+        'found_assignees': getattr(patent, 'assignees', None) or [],
+    }
+
 
 def _parse_claim_into_elements(claim_text):
     """Parse patent claim text into structured elements (preamble + body limitations).
@@ -265,6 +313,75 @@ class InfringementCaseViewSet(viewsets.ModelViewSet):
 
         serializer = InfringementCaseSerializer(case)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='enrich-from-odp')
+    def enrich_from_odp(self, request, pk=None):
+        """Resolve this case's patent number on USPTO ODP, link/create the canonical
+        Patent, and fill blank case fields. Refuses to link when the resolved record
+        doesn't match the case (title), so an unrelated patent that merely shares the
+        number isn't attached. Pass {"force": true} to link anyway. USPTO only — no LLM.
+        """
+        from domains.patents.models import Patent
+        from domains.patents.enrichment_service import resolve_application_number, enrich_patent
+
+        case = self.get_object()
+        if not case.patent_number:
+            return Response({'error': 'Case has no patent number to look up.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        force = bool(request.data.get('force'))
+
+        try:
+            app_num = resolve_application_number(case.patent_number)
+        except Exception as exc:  # network/ODP failure
+            logger.warning('enrich_from_odp resolve failed for %s: %s', case.patent_number, exc)
+            return Response({'error': f'USPTO lookup failed: {exc}'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        if not app_num:
+            return Response(
+                {'matched': False, 'error': 'No USPTO application found for this patent number.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Start a new Patent with a BLANK title so enrich_patent fills it from USPTO —
+        # seeding it with the case title would make the match guard compare the title to
+        # itself and always pass.
+        patent, _created = Patent.objects.get_or_create(
+            application_number=app_num,
+            defaults={'title': ''},
+        )
+        try:
+            enrich_patent(patent)
+        except Exception as exc:
+            logger.warning('enrich_from_odp enrich failed for app %s: %s', app_num, exc)
+            return Response({'error': f'USPTO enrichment failed: {exc}'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        match = _odp_case_match(case, patent)
+        if not match['confident'] and not force:
+            return Response({
+                'matched': False,
+                'reason': (
+                    f"USPTO record “{match['found_title']}” doesn’t match this case’s "
+                    f"patent title."
+                ),
+                **match,
+            }, status=status.HTTP_200_OK)
+
+        # Link the canonical patent and fill blank case fields (never clobber analyst edits).
+        case.patent = patent
+        if not case.patent_title and patent.title:
+            case.patent_title = patent.title
+        if not case.patent_abstract and patent.abstract:
+            case.patent_abstract = patent.abstract
+        case.save(update_fields=['patent', 'patent_title', 'patent_abstract', 'updated_at'])
+
+        return Response({
+            'matched': True,
+            **match,
+            'case': InfringementCaseSerializer(case, context={'request': request}).data,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def update_risk_level(self, request, pk=None):

@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Search,
   Crop,
+  Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -21,6 +22,8 @@ import { useEvidence } from '@/hooks/useInfringementData';
 import { getEvidenceTypeLabel, formatDate } from '@/domains/infringement/utils';
 import { EvidenceUploadDialog } from './EvidenceUploadDialog';
 import { SuggestEvidenceDialog } from './SuggestEvidenceDialog';
+import { EvidenceEditDialog } from './EvidenceEditDialog';
+import { Evidence } from '@/services/infringementApi';
 import { Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -34,6 +37,7 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
   const { evidence, loading, refresh, deleteEvidence } = useEvidence({ case: caseId });
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [suggestDialogOpen, setSuggestDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<Evidence | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [sort, setSort] = useState('-relevance');
@@ -242,6 +246,14 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
                     <Button
                       variant="ghost"
                       size="sm"
+                      onClick={() => setEditing(item)}
+                      title="Edit evidence details"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleDelete(item.id)}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -266,6 +278,12 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
         onOpenChange={setSuggestDialogOpen}
         caseId={caseId}
         onAdded={refresh}
+      />
+      <EvidenceEditDialog
+        open={!!editing}
+        onOpenChange={(o) => { if (!o) setEditing(null); }}
+        evidence={editing}
+        onSaved={refresh}
       />
     </div>
   );

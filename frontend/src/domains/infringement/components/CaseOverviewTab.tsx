@@ -12,8 +12,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { InfringementCase } from '@/services/infringementApi';
+import { InfringementCase, infringementApi } from '@/services/infringementApi';
 import { usptoOdpApi, ODPApplicationSummary } from '@/services/usptoOdpApi';
+import { toast } from 'sonner';
 import {
   getStatusColor,
   getRiskColor,
@@ -35,6 +36,26 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
   // Mismatch guard: don't show enrichment for an unrelated patent that merely shares the number.
   const [odpMatch, setOdpMatch] = useState<OdpMatchResult | null>(null);
   const [showAnyway, setShowAnyway] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncFromOdp = async () => {
+    setSyncing(true);
+    try {
+      const res = await infringementApi.enrichFromOdp(caseData.id);
+      if (res.success && res.data?.matched) {
+        toast.success('Linked USPTO record and filled patent details');
+        onRefresh();
+      } else if (res.success && res.data && !res.data.matched) {
+        toast.warning(res.data.reason || 'No confidently matching USPTO record — not linked.');
+      } else {
+        toast.error('USPTO sync failed');
+      }
+    } catch {
+      toast.error('USPTO sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Load ODP data for live patent status
   useEffect(() => {
@@ -251,7 +272,15 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">USPTO Patent Status (Live)</CardTitle>
-              {odpLoading && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+              <div className="flex items-center gap-2">
+                {odpLoading && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+                {odpData && odpMatch?.confident && (
+                  <Button variant="outline" size="sm" onClick={handleSyncFromOdp} disabled={syncing}>
+                    {syncing ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    Sync from USPTO
+                  </Button>
+                )}
+              </div>
             </div>
           </CardHeader>
           <CardContent>

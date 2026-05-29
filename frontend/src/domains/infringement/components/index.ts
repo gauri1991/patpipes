@@ -16,3 +16,5 @@ export { RiskAssessmentDialog } from './RiskAssessmentDialog';
 export { StatusChangeDialog } from './StatusChangeDialog';
 export { EditCaseDialog } from './EditCaseDialog';
 export { ListPagination } from './ListPagination';
+export { EvidenceEditDialog } from './EvidenceEditDialog';
+export { ClaimTermsManager } from './ClaimTermsManager';

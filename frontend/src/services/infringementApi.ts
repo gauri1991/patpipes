@@ -394,6 +394,19 @@ class InfringementApiService extends ApiClient {
     return this.post<InfringementCase>(`${this.BASE_PATH}/cases/${caseId}/update_risk_level/`, { risk_level: riskLevel });
   }
 
+  // Resolve the case's patent number on USPTO ODP and link/fill the canonical Patent.
+  // Refuses to link a non-matching record unless force=true. Returns matched=false (200)
+  // when the resolved patent doesn't match this case.
+  async enrichFromOdp(id: string, force = false): Promise<ApiResponse<{
+    matched: boolean;
+    reason?: string;
+    title_similarity?: number;
+    found_title?: string;
+    case?: InfringementCase;
+  }>> {
+    return this.post(`${this.BASE_PATH}/cases/${id}/enrich-from-odp/`, { force });
+  }
+
   async createFromPatent(data: {
     patent_id: string;
     case_name?: string;

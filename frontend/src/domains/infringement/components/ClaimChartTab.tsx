@@ -42,6 +42,7 @@ import { ElementDialog } from './ElementDialog';
 import { DoeAnalysisDialog } from './DoeAnalysisDialog';
 import { LinkEvidenceDialog } from './LinkEvidenceDialog';
 import { HighlightedText } from './HighlightedText';
+import { ClaimTermsManager } from './ClaimTermsManager';
 import { Link2, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -476,6 +477,10 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
           </Button>
         </div>
       </div>
+
+      {!loading && !autoImporting && claimMappings.length > 0 && (
+        <ClaimTermsManager caseId={caseId} termColors={termColors} onChange={setTermColors} />
+      )}
 
       {loading || autoImporting ? (
         <div className="text-center py-8">

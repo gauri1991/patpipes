@@ -516,6 +516,10 @@ def _patent_number_candidates(raw):
 
     # Drop a leading 2-letter country code when it sits in front of the number.
     body = re.sub(r'^[A-Z]{2}(?=[0-9])', '', s)
+    # Strip grouping commas/spaces (e.g. '11,693,802B2' → '11693802B2') so the kind-code
+    # matcher below sees a clean "<digits><letter>" — otherwise the kind code's digit
+    # leaks into the all-digits fallback and yields a bogus number.
+    body = re.sub(r'[,\s]', '', body)
 
     # A) Trailing kind code with its letter intact (e.g. '10077374B2', '8806222A1').
     m = re.match(r'^(\d+)[A-Z]\d?$', body)
