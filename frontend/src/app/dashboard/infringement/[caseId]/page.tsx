@@ -137,8 +137,8 @@ export default function CaseDetailPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="claims">Claim Chart</TabsTrigger>
           <TabsTrigger value="evidence">Evidence</TabsTrigger>
+          <TabsTrigger value="claims">Claim Chart</TabsTrigger>
           <TabsTrigger value="risk">Risk</TabsTrigger>
           <TabsTrigger value="damages">Damages</TabsTrigger>
           <TabsTrigger value="ptab">PTAB</TabsTrigger>
@@ -149,6 +149,10 @@ export default function CaseDetailPage() {
           <CaseOverviewTab caseData={caseData} onRefresh={refresh} />
         </TabsContent>
 
+        <TabsContent value="evidence">
+          <EvidenceTab caseId={caseId} caseName={caseData.case_name} />
+        </TabsContent>
+
         <TabsContent value="claims">
           <ClaimChartTab
             key={claimsRefreshKey}
@@ -157,10 +161,6 @@ export default function CaseDetailPage() {
             patentNumber={caseData.patent_number}
             onImportClaims={() => setImportClaimsOpen(true)}
           />
-        </TabsContent>
-
-        <TabsContent value="evidence">
-          <EvidenceTab caseId={caseId} caseName={caseData.case_name} />
         </TabsContent>
 
         <TabsContent value="risk">

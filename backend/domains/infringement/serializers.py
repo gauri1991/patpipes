@@ -9,6 +9,7 @@ from .models import (
     ClaimMapping,
     ClaimElement,
     Evidence,
+    EvidenceScreenshot,
     RiskAssessment,
     DamagesAnalysis,
     ExpertOpinion,
@@ -17,23 +18,80 @@ from .models import (
 )
 
 
+def _screenshot_briefs(obj, request=None):
+    """Lightweight briefs of the screenshots mapped to a claim element (reverse M2M)."""
+    briefs = []
+    for s in obj.screenshots.all():
+        url = s.image.url if s.image else ''
+        if request and url:
+            url = request.build_absolute_uri(url)
+        briefs.append({
+            'id': str(s.id),
+            'image': url,
+            'page_number': s.page_number,
+            'caption': s.caption,
+            # provenance: which PDF + which region on the page the crop came from.
+            'evidence_id': str(s.evidence_id),
+            'evidence_title': s.evidence.title if s.evidence_id else '',
+            'bbox': {'x': s.bbox_x, 'y': s.bbox_y, 'width': s.bbox_width, 'height': s.bbox_height},
+            'annotations': s.annotations or [],
+            # all elements this screenshot maps to — lets the UI unmap from one vs delete.
+            'claim_elements': [str(e_id) for e_id in s.claim_elements.values_list('id', flat=True)],
+        })
+    return briefs
+
+
+def _evidence_briefs(ids):
+    """Resolve a list of Evidence IDs into lightweight display briefs, order-preserved."""
+    if not ids:
+        return []
+    rows = Evidence.objects.filter(id__in=ids).values(
+        'id', 'title', 'evidence_type', 'url', 'file'
+    )
+    by_id = {str(r['id']): r for r in rows}
+    briefs = []
+    for i in ids:
+        r = by_id.get(str(i))
+        if r:
+            briefs.append({
+                'id': str(r['id']),
+                'title': r['title'],
+                'evidence_type': r['evidence_type'],
+                'url': r['url'] or '',
+                'has_file': bool(r['file']),
+            })
+    return briefs
+
+
 class ClaimElementSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
+    linked_evidence = serializers.SerializerMethodField()
+    screenshots = serializers.SerializerMethodField()
 
     class Meta:
         model = ClaimElement
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'created_by')
 
+    def get_linked_evidence(self, obj):
+        return _evidence_briefs(obj.evidence_references or [])
+
+    def get_screenshots(self, obj):
+        return _screenshot_briefs(obj, self.context.get('request'))
+
 
 class ClaimMappingSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
     elements = ClaimElementSerializer(many=True, read_only=True)
+    linked_evidence = serializers.SerializerMethodField()
 
     class Meta:
         model = ClaimMapping
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'created_by')
+
+    def get_linked_evidence(self, obj):
+        return _evidence_briefs(obj.evidence_references or [])
 
 
 class EvidenceSerializer(serializers.ModelSerializer):
@@ -43,6 +101,26 @@ class EvidenceSerializer(serializers.ModelSerializer):
         model = Evidence
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'uploaded_by')
+
+
+class EvidenceScreenshotSerializer(serializers.ModelSerializer):
+    created_by = UserSerializer(read_only=True)
+    claim_element_labels = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EvidenceScreenshot
+        fields = '__all__'
+        # case is derived from evidence server-side; claim_elements is writable (M2M).
+        read_only_fields = ('id', 'created_at', 'created_by', 'case')
+
+    def get_claim_element_labels(self, obj):
+        return [
+            {
+                'id': str(el.id),
+                'label': f"{el.claim_mapping.claim_number}.{el.element_order}",
+            }
+            for el in obj.claim_elements.select_related('claim_mapping').all()
+        ]
 
 
 class RiskAssessmentSerializer(serializers.ModelSerializer):

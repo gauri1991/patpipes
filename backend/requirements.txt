@@ -7,6 +7,9 @@ drf-nested-routers==0.93.5
 python-decouple==3.8
 python-dotenv==1.1.1
 Pillow==11.0.0
+# NLP for claim-term extraction (noun-phrase chunking). Model installed via wheel below.
+spacy==3.8.7
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 celery==5.4.0
 redis==5.2.0
 psycopg2-binary==2.9.12

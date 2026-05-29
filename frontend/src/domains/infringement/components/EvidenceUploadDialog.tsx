@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
@@ -42,8 +43,32 @@ export function EvidenceUploadDialog({
   const [evidenceType, setEvidenceType] = useState('product_doc');
   const [url, setUrl] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [relevanceScore, setRelevanceScore] = useState(5);
+  const [relatedClaims, setRelatedClaims] = useState<Set<string>>(new Set());
+  const [claimOptions, setClaimOptions] = useState<Array<{ id: string; claim_number: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load the case's claims so evidence can be linked to specific claim numbers.
+  useEffect(() => {
+    if (!open) return;
+    infringementApi
+      .getClaimMappings({ case: caseId })
+      .then((res) => {
+        const d: any = res.data;
+        const list = Array.isArray(d) ? d : d?.results ?? [];
+        setClaimOptions(list.map((m: any) => ({ id: m.id, claim_number: m.claim_number })));
+      })
+      .catch(() => setClaimOptions([]));
+  }, [open, caseId]);
+
+  const toggleClaim = (claimNumber: string) => {
+    setRelatedClaims((prev) => {
+      const next = new Set(prev);
+      next.has(claimNumber) ? next.delete(claimNumber) : next.add(claimNumber);
+      return next;
+    });
+  };
 
   const handleUpload = async () => {
     if (!title || !description || (!file && !url)) return;
@@ -55,10 +80,16 @@ export function EvidenceUploadDialog({
       formData.append('description', description);
       formData.append('evidence_type', evidenceType);
       formData.append('case', caseId);
+      formData.append('relevance_score', String(relevanceScore));
       if (file) formData.append('file', file);
       if (url) formData.append('url', url);
 
-      await infringementApi.createEvidence(formData);
+      const res = await infringementApi.createEvidence(formData);
+      // related_claims is a JSON field; set it via a follow-up JSON PATCH (multipart
+      // can't reliably carry a JSON list).
+      if (res.success && res.data && relatedClaims.size > 0) {
+        await infringementApi.updateEvidence(res.data.id, { related_claims: Array.from(relatedClaims) });
+      }
       toast.success('Evidence uploaded successfully');
       onOpenChange(false);
       resetForm();
@@ -77,6 +108,8 @@ export function EvidenceUploadDialog({
     setEvidenceType('product_doc');
     setUrl('');
     setFile(null);
+    setRelevanceScore(5);
+    setRelatedClaims(new Set());
   };
 
   return (
@@ -152,6 +185,43 @@ export function EvidenceUploadDialog({
               placeholder="https://example.com/evidence"
             />
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="evidence-relevance">Relevance score: {relevanceScore}/10</Label>
+            <input
+              id="evidence-relevance"
+              type="range"
+              min={0}
+              max={10}
+              step={1}
+              value={relevanceScore}
+              onChange={(e) => setRelevanceScore(Number(e.target.value))}
+              className="w-full"
+            />
+          </div>
+
+          {claimOptions.length > 0 && (
+            <div className="space-y-2">
+              <Label>Related claims</Label>
+              <div className="flex flex-wrap gap-2">
+                {claimOptions.map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onClick={() => toggleClaim(c.claim_number)}
+                    className="focus:outline-none"
+                  >
+                    <Badge
+                      variant={relatedClaims.has(c.claim_number) ? 'default' : 'outline'}
+                      className="cursor-pointer"
+                    >
+                      Claim {c.claim_number}
+                    </Badge>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-3">

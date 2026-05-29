@@ -407,7 +407,9 @@ export function useRiskAssessments(params?: {
       setError(null);
       const response = await infringementApi.getRiskAssessments(memoizedParams);
       if (response.success && response.data) {
-        setRiskAssessments(Array.isArray(response.data) ? response.data : [response.data]);
+        const data: any = response.data;
+        // Unwrap DRF pagination ({ count, results }) like the other list hooks.
+        setRiskAssessments(Array.isArray(data) ? data : (data.results ?? []));
       } else {
         throw new Error(response.error || 'Failed to fetch risk assessments');
       }
@@ -507,7 +509,9 @@ export function useInfringementReports(params?: {
       setError(null);
       const response = await infringementApi.getReports(memoizedParams);
       if (response.success && response.data) {
-        setReports(Array.isArray(response.data) ? response.data : [response.data]);
+        const data: any = response.data;
+        // Unwrap DRF pagination ({ count, results }) like the other list hooks.
+        setReports(Array.isArray(data) ? data : (data.results ?? []));
       } else {
         throw new Error(response.error || 'Failed to fetch reports');
       }

@@ -40,6 +40,9 @@ import {
 import { ClaimMappingDialog } from './ClaimMappingDialog';
 import { ElementDialog } from './ElementDialog';
 import { DoeAnalysisDialog } from './DoeAnalysisDialog';
+import { LinkEvidenceDialog } from './LinkEvidenceDialog';
+import { HighlightedText } from './HighlightedText';
+import { Link2, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ClaimChartTabProps {
@@ -53,6 +56,19 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
   const { claimMappings, loading, refresh, deleteClaimMapping } = useClaimMappings({ case: caseId });
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  // AI-assist (gated) busy state, keyed by mapping id
+  const [aiBusyId, setAiBusyId] = useState<string | null>(null);
+  // Evidence-citation linking
+  const [linkEvidenceElement, setLinkEvidenceElement] = useState<ClaimElement | null>(null);
+  const [linkEvidenceOpen, setLinkEvidenceOpen] = useState(false);
+  const [reimporting, setReimporting] = useState(false);
+  // Case-wide claim-term colors for inline highlighting (read-only here).
+  const [termColors, setTermColors] = useState<Record<string, string>>({});
+  useEffect(() => {
+    infringementApi.getCase(caseId)
+      .then((res) => { if (res.success) setTermColors(res.data?.claim_term_colors || {}); })
+      .catch(() => {});
+  }, [caseId]);
 
   // Auto-import state
   const [autoImporting, setAutoImporting] = useState(false);
@@ -168,6 +184,47 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
     }
   };
 
+  // AI-draft an element-by-element mapping (heuristic until the backend master switch
+  // is enabled). Output is flagged 'ai_draft' for analyst review.
+  const handleGenerateMapping = async (mapping: ClaimMapping) => {
+    if (mapping.elements && mapping.elements.length > 0) {
+      const ok = window.confirm('This replaces the existing elements with an AI draft. Continue?');
+      if (!ok) return;
+    }
+    setAiBusyId(mapping.id);
+    try {
+      const res = await infringementApi.generateClaimMapping(mapping.id, true);
+      if (res.success) {
+        toast.success(`AI draft created: ${res.data?.count ?? 0} elements — please review`);
+        refresh();
+      } else {
+        toast.error('Failed to generate mapping');
+      }
+    } catch {
+      toast.error('Failed to generate mapping');
+    } finally {
+      setAiBusyId(null);
+    }
+  };
+
+  // Analyst confirms an AI draft: flip the mapping and its draft elements to 'confirmed'.
+  const handleConfirmDraft = async (mapping: ClaimMapping) => {
+    setAiBusyId(mapping.id);
+    try {
+      await infringementApi.updateClaimMapping(mapping.id, { review_status: 'confirmed' });
+      const drafts = (mapping.elements || []).filter((el) => el.review_status === 'ai_draft');
+      await Promise.allSettled(
+        drafts.map((el) => infringementApi.updateClaimElement(el.id, { review_status: 'confirmed' }))
+      );
+      toast.success('AI draft confirmed');
+      refresh();
+    } catch {
+      toast.error('Failed to confirm draft');
+    } finally {
+      setAiBusyId(null);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     const confirmed = window.confirm('Delete this claim mapping?');
     if (!confirmed) return;
@@ -265,6 +322,50 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
     }
   };
 
+  // Download the detailed element-level claim chart as .xlsx (authenticated blob).
+  const handleExportExcel = async () => {
+    try {
+      const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+      const token = (typeof window !== 'undefined' &&
+        (localStorage.getItem('patpipes_access_token') || localStorage.getItem('access_token'))) || '';
+      const res = await fetch(`${base}/infringement/cases/${caseId}/export-claim-chart-excel/`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `claim_chart_${caseName.replace(/\s+/g, '_').slice(0, 40)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Failed to export Excel');
+    }
+  };
+
+  // Replace all current claims with a fresh import from the linked patent (force).
+  // Useful when the existing mappings are stale/mismatched to the patent.
+  const handleReimport = async () => {
+    if (!window.confirm('Replace all current claims with a fresh import from the patent? This deletes existing mappings and their elements.')) return;
+    setReimporting(true);
+    try {
+      const res = await infringementApi.autoImportClaims(caseId, true);
+      if (res.success) {
+        toast.success(`Re-imported ${res.data?.count ?? 0} claims from the patent`);
+        refresh();
+      } else {
+        toast.error('Re-import failed');
+      }
+    } catch {
+      toast.error('Re-import failed');
+    } finally {
+      setReimporting(false);
+    }
+  };
+
   const handleExportToPDF = () => {
     const content = `
       <!DOCTYPE html><html><head><title>Claim Chart - ${caseName}</title>
@@ -336,11 +437,19 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
             <Download className="h-4 w-4 mr-2" />
             PDF
           </Button>
+          <Button variant="outline" size="sm" onClick={handleExportExcel}>
+            <Download className="h-4 w-4 mr-2" />
+            Excel
+          </Button>
           {onImportClaims && (
             <Button variant="outline" size="sm" onClick={onImportClaims}>
               Import from USPTO
             </Button>
           )}
+          <Button variant="outline" size="sm" onClick={handleReimport} disabled={reimporting} title="Replace claims with a fresh import from the patent">
+            {reimporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+            Re-import
+          </Button>
           <Button
             variant={viewMode === 'table' ? 'default' : 'outline'}
             size="sm"
@@ -510,9 +619,14 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                 <div className="flex-1">
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="outline" className="font-mono">Claim {mapping.claim_number}</Badge>
                         <Badge variant="secondary" className="text-xs">{mapping.claim_type}</Badge>
+                        {mapping.review_status === 'ai_draft' && (
+                          <Badge className="text-xs bg-amber-100 text-amber-800 border border-amber-300">
+                            <Zap className="h-3 w-3 mr-1" />AI draft — review
+                          </Badge>
+                        )}
                       </div>
                       <div className="bg-background rounded-md border">
                         <button
@@ -577,6 +691,27 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                         <Badge variant="secondary" className="ml-1 text-xs">{elementSummaries[mapping.id].total_elements}</Badge>
                       )}
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleGenerateMapping(mapping)}
+                      disabled={aiBusyId === mapping.id}
+                      title="Draft an element-by-element mapping for review"
+                    >
+                      {aiBusyId === mapping.id ? <Loader2 className="h-3 w-3 mr-2 animate-spin" /> : <Zap className="h-3 w-3 mr-2" />}
+                      AI map
+                    </Button>
+                    {mapping.review_status === 'ai_draft' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-green-700 border-green-300 hover:bg-green-50"
+                        onClick={() => handleConfirmDraft(mapping)}
+                        disabled={aiBusyId === mapping.id}
+                      >
+                        <Save className="h-3 w-3 mr-2" />Confirm
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" onClick={() => handleDuplicate(mapping)}>
                       <Copy className="h-3 w-3 mr-2" />Duplicate
                     </Button>
@@ -627,7 +762,16 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                           {claimElements[mapping.id].map((element, eIdx) => {
                             const badge = getMeetsLimitationBadge(element.meets_limitation);
                             return (
-                              <div key={element.id || `element-${eIdx}`} className="p-3 bg-background rounded-lg border">
+                              <div
+                                key={element.id || `element-${eIdx}`}
+                                className={`p-3 bg-background rounded-lg border border-l-4 ${
+                                  element.meets_limitation === true
+                                    ? 'border-l-green-500'
+                                    : element.meets_limitation === false
+                                    ? 'border-l-red-500'
+                                    : 'border-l-amber-400'
+                                }`}
+                              >
                                 <div className="flex items-start justify-between">
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-2">
@@ -641,7 +785,7 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                                     <div className="grid md:grid-cols-2 gap-3">
                                       <div>
                                         <p className="text-xs font-medium text-muted-foreground mb-1">Element Text:</p>
-                                        <p className="text-sm">{element.element_text}</p>
+                                        <p className="text-sm"><HighlightedText text={element.element_text} termColors={termColors} /></p>
                                       </div>
                                       {element.accused_feature && (
                                         <div>
@@ -653,8 +797,34 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                                         </div>
                                       )}
                                     </div>
+                                    {element.linked_evidence && element.linked_evidence.length > 0 && (
+                                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                        <span className="text-xs font-medium text-muted-foreground">Citations:</span>
+                                        {element.linked_evidence.map((ev) =>
+                                          ev.url ? (
+                                            <a
+                                              key={ev.id}
+                                              href={ev.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border bg-blue-50 text-blue-700 hover:bg-blue-100"
+                                              title={ev.evidence_type}
+                                            >
+                                              <ExternalLink className="h-3 w-3" />{ev.title}
+                                            </a>
+                                          ) : (
+                                            <Badge key={ev.id} variant="outline" className="text-xs" title={ev.evidence_type}>
+                                              {ev.title}
+                                            </Badge>
+                                          )
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="flex items-center gap-1 ml-2">
+                                    <Button variant="ghost" size="sm" onClick={() => { setLinkEvidenceElement(element); setLinkEvidenceOpen(true); }} title="Link evidence">
+                                      <Link2 className="h-3 w-3" />
+                                    </Button>
                                     <Button variant="ghost" size="sm" onClick={() => { setSelectedElement(element); setDoeDialogOpen(true); }} title="Analyze DoE">
                                       <Zap className="h-3 w-3" />
                                     </Button>
@@ -724,6 +894,15 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
         element={selectedElement}
         onSaved={() => {
           if (selectedElement) refreshElements(selectedElement.claim_mapping);
+        }}
+      />
+      <LinkEvidenceDialog
+        open={linkEvidenceOpen}
+        onOpenChange={setLinkEvidenceOpen}
+        caseId={caseId}
+        element={linkEvidenceElement}
+        onSaved={() => {
+          if (linkEvidenceElement) refreshElements(linkEvidenceElement.claim_mapping);
         }}
       />
     </div>

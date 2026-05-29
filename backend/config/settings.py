@@ -135,6 +135,11 @@ REST_FRAMEWORK = {
     },
 }
 
+# Master switch for live LLM calls in the infringement AI features.
+# OFF by default: claim-chart / evidence AI runs heuristically and spends no tokens
+# until this is explicitly enabled (e.g. INFRINGEMENT_AI_LLM_ENABLED=True in env).
+INFRINGEMENT_AI_LLM_ENABLED = config('INFRINGEMENT_AI_LLM_ENABLED', default=False, cast=bool)
+
 # JWT Configuration
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),

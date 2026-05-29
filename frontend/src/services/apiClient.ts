@@ -10,6 +10,14 @@ export interface ApiResponse<T = any> {
   message?: string;
 }
 
+// Build a fetch body: pass FormData through untouched (so file uploads work and the
+// browser sets the multipart boundary); JSON-encode everything else.
+function toRequestBody(data?: any): BodyInit | undefined {
+  if (data === undefined || data === null) return undefined;
+  if (data instanceof FormData) return data;
+  return JSON.stringify(data);
+}
+
 export class ApiClient {
   protected baseURL: string;
 
@@ -268,21 +276,21 @@ export class ApiClient {
   async post<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
     return this.fetchWithAuth<T>(endpoint, {
       method: 'POST',
-      body: data ? JSON.stringify(data) : undefined,
+      body: toRequestBody(data),
     });
   }
 
   async put<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
     return this.fetchWithAuth<T>(endpoint, {
       method: 'PUT',
-      body: data ? JSON.stringify(data) : undefined,
+      body: toRequestBody(data),
     });
   }
 
   async patch<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
     return this.fetchWithAuth<T>(endpoint, {
       method: 'PATCH',
-      body: data ? JSON.stringify(data) : undefined,
+      body: toRequestBody(data),
     });
   }
 

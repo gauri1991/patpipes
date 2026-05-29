@@ -57,6 +57,9 @@ export interface InfringementCase {
   notes?: string;
   is_confidential: boolean;
 
+  // Case-wide claim term → hex color map (for term highlighting + annotation palette)
+  claim_term_colors?: Record<string, string>;
+
   // Metadata
   created_at: string;
   updated_at: string;
@@ -77,6 +80,14 @@ export interface User {
   role?: string;
 }
 
+export interface EvidenceBrief {
+  id: string;
+  title: string;
+  evidence_type: string;
+  url: string;
+  has_file: boolean;
+}
+
 export interface ClaimElement {
   id: string;
   claim_mapping: string;
@@ -91,6 +102,11 @@ export interface ClaimElement {
   doe_way?: string;
   doe_result?: string;
   doe_score?: number;
+  evidence_references?: string[];
+  linked_evidence?: EvidenceBrief[];
+  screenshots?: ScreenshotBrief[];
+  is_ai_generated?: boolean;
+  review_status?: 'confirmed' | 'ai_draft' | 'edited';
   created_at: string;
   updated_at: string;
   created_by?: User;
@@ -109,6 +125,9 @@ export interface ClaimMapping {
   analysis_notes?: string;
   limitations_met: boolean;
   evidence_references: string[];
+  linked_evidence?: EvidenceBrief[];
+  is_ai_generated?: boolean;
+  review_status?: 'confirmed' | 'ai_draft' | 'edited';
   elements?: ClaimElement[];
   created_at: string;
   updated_at: string;
@@ -140,6 +159,50 @@ export interface Evidence {
   created_at: string;
   updated_at: string;
   uploaded_by?: User;
+}
+
+// A vector callout drawn on a screenshot. Coords are normalized 0-1 to the image.
+export interface Annotation {
+  id: string;
+  type: 'line' | 'arrow' | 'box';
+  color: string;
+  stroke?: number;                              // thickness in px
+  lineStyle?: 'solid' | 'dashed' | 'dotted';    // stroke pattern
+  // line / arrow
+  x1?: number; y1?: number; x2?: number; y2?: number;
+  // box
+  x?: number; y?: number; w?: number; h?: number;
+}
+
+export interface EvidenceScreenshot {
+  id: string;
+  case: string;
+  evidence: string;
+  claim_elements: string[];
+  claim_element_labels?: { id: string; label: string }[];
+  image: string;
+  page_number: number;
+  bbox_x: number;
+  bbox_y: number;
+  bbox_width: number;
+  bbox_height: number;
+  caption?: string;
+  annotations?: Annotation[];
+  created_at: string;
+  created_by?: User;
+}
+
+// Brief shape returned on ClaimElement.screenshots
+export interface ScreenshotBrief {
+  id: string;
+  image: string;
+  page_number: number;
+  caption?: string;
+  evidence_id?: string;
+  evidence_title?: string;
+  bbox?: { x: number; y: number; width: number; height: number };
+  annotations?: Annotation[];
+  claim_elements?: string[];
 }
 
 export interface RiskAssessment {
@@ -284,6 +347,31 @@ class InfringementApiService extends ApiClient {
     return this.get<InfringementCase>(`${this.BASE_PATH}/cases/${id}/`);
   }
 
+  // Extract antecedent-basis claim terms and assign consistent colors (heuristic/spaCy).
+  async extractClaimTerms(id: string, strategy = 'antecedent'): Promise<ApiResponse<{ claim_term_colors: Record<string, string>; count: number }>> {
+    return this.post(`${this.BASE_PATH}/cases/${id}/extract-claim-terms/`, { strategy });
+  }
+
+  // Manually override one term's color.
+  async setClaimTermColor(id: string, term: string, color: string): Promise<ApiResponse<{ claim_term_colors: Record<string, string> }>> {
+    return this.post(`${this.BASE_PATH}/cases/${id}/set-term-color/`, { term, color });
+  }
+
+  // Add a missed term (un-excludes it).
+  async addClaimTerm(id: string, term: string, color?: string): Promise<ApiResponse<{ claim_term_colors: Record<string, string>; claim_term_excluded: string[] }>> {
+    return this.post(`${this.BASE_PATH}/cases/${id}/add-term/`, { term, ...(color ? { color } : {}) });
+  }
+
+  // Remove a term (excludes it so auto-extraction won't re-add it).
+  async removeClaimTerm(id: string, term: string): Promise<ApiResponse<{ claim_term_colors: Record<string, string>; claim_term_excluded: string[] }>> {
+    return this.post(`${this.BASE_PATH}/cases/${id}/remove-term/`, { term });
+  }
+
+  // Rename a term; merges if the new term already exists.
+  async renameClaimTerm(id: string, term: string, newTerm: string): Promise<ApiResponse<{ claim_term_colors: Record<string, string>; claim_term_excluded: string[] }>> {
+    return this.post(`${this.BASE_PATH}/cases/${id}/rename-term/`, { term, new_term: newTerm });
+  }
+
   async createCase(data: Partial<InfringementCase>): Promise<ApiResponse<InfringementCase>> {
     return this.post<InfringementCase>(`${this.BASE_PATH}/cases/`, data);
   }
@@ -341,6 +429,14 @@ class InfringementApiService extends ApiClient {
     return this.get<ClaimElement[]>(`${this.BASE_PATH}/claim-mappings/${claimMappingId}/elements/`);
   }
 
+  // Draft an element-by-element claim→product mapping for analyst review.
+  async generateClaimMapping(claimMappingId: string, useLlm = false, productDescription?: string): Promise<ApiResponse<{ summary: string; elements: ClaimElement[]; count: number; ai_draft: boolean }>> {
+    return this.post(`${this.BASE_PATH}/claim-mappings/${claimMappingId}/generate-mapping/`, {
+      use_llm: useLlm,
+      ...(productDescription ? { product_description: productDescription } : {}),
+    });
+  }
+
   async getElementSummary(claimMappingId: string): Promise<ApiResponse<ElementSummary>> {
     return this.get<ElementSummary>(`${this.BASE_PATH}/claim-mappings/${claimMappingId}/element_summary/`);
   }
@@ -393,6 +489,10 @@ class InfringementApiService extends ApiClient {
     return this.get<Evidence[]>(`${this.BASE_PATH}/evidence/`, { params });
   }
 
+  async getEvidenceItem(id: string): Promise<ApiResponse<Evidence>> {
+    return this.get<Evidence>(`${this.BASE_PATH}/evidence/${id}/`);
+  }
+
   async createEvidence(data: FormData | Partial<Evidence>): Promise<ApiResponse<Evidence>> {
     if (data instanceof FormData) {
       return this.post<Evidence>(`${this.BASE_PATH}/evidence/`, data);
@@ -402,6 +502,36 @@ class InfringementApiService extends ApiClient {
 
   async updateEvidence(id: string, data: Partial<Evidence>): Promise<ApiResponse<Evidence>> {
     return this.patch<Evidence>(`${this.BASE_PATH}/evidence/${id}/`, data);
+  }
+
+  // Assisted evidence sourcing: fetch a product URL server-side and return ranked
+  // candidate passages (nothing persisted). LLM ranking gated by the backend switch.
+  async suggestEvidenceFromUrl(params: {
+    url: string;
+    claim_mapping_id?: string;
+    claim_text?: string;
+    use_llm?: boolean;
+  }): Promise<ApiResponse<{ source_url: string; title: string; candidates: Array<{ text: string; score: number; reason: string }>; count: number }>> {
+    return this.post(`${this.BASE_PATH}/evidence/suggest-from-url/`, params);
+  }
+
+  // ==================== Evidence Screenshots (EoU regions) ====================
+
+  async getScreenshots(params?: { case?: string; evidence?: string; claim_elements?: string }): Promise<ApiResponse<EvidenceScreenshot[]>> {
+    return this.get<EvidenceScreenshot[]>(`${this.BASE_PATH}/screenshots/`, { params });
+  }
+
+  // Create from a FormData (image PNG + evidence + page_number + bbox + repeated claim_elements).
+  async createScreenshot(data: FormData): Promise<ApiResponse<EvidenceScreenshot>> {
+    return this.post<EvidenceScreenshot>(`${this.BASE_PATH}/screenshots/`, data);
+  }
+
+  async updateScreenshot(id: string, data: Partial<EvidenceScreenshot>): Promise<ApiResponse<EvidenceScreenshot>> {
+    return this.patch<EvidenceScreenshot>(`${this.BASE_PATH}/screenshots/${id}/`, data);
+  }
+
+  async deleteScreenshot(id: string): Promise<ApiResponse<void>> {
+    return this.delete<void>(`${this.BASE_PATH}/screenshots/${id}/`);
   }
 
   async deleteEvidence(id: string): Promise<ApiResponse<void>> {
@@ -504,12 +634,14 @@ class InfringementApiService extends ApiClient {
 
   // ==================== Auto-Import Claims ====================
 
-  async autoImportClaims(caseId: string): Promise<ApiResponse<AutoImportClaimsResponse>> {
-    return this.post<AutoImportClaimsResponse>(`${this.BASE_PATH}/cases/${caseId}/auto-import-claims/`, {});
+  // force=true replaces existing mappings (e.g. when current claims are stale/mismatched).
+  async autoImportClaims(caseId: string, force = false): Promise<ApiResponse<AutoImportClaimsResponse>> {
+    return this.post<AutoImportClaimsResponse>(`${this.BASE_PATH}/cases/${caseId}/auto-import-claims/`, { force });
   }
 
-  async parseClaimElements(claimMappingId: string): Promise<ApiResponse<{ elements: ClaimElement[]; count: number }>> {
-    return this.post<{ elements: ClaimElement[]; count: number }>(`${this.BASE_PATH}/claim-mappings/${claimMappingId}/parse-elements/`, {});
+  // useLlm opts into the gated LLM parser (dormant until the backend master switch is on).
+  async parseClaimElements(claimMappingId: string, useLlm = false): Promise<ApiResponse<{ elements: ClaimElement[]; count: number; ai_draft?: boolean }>> {
+    return this.post<{ elements: ClaimElement[]; count: number; ai_draft?: boolean }>(`${this.BASE_PATH}/claim-mappings/${claimMappingId}/parse-elements/`, { use_llm: useLlm });
   }
 
   // ==================== PTAB ====================

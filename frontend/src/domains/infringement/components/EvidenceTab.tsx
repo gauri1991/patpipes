@@ -1,20 +1,28 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Plus,
   FileText,
   Download,
   Trash2,
   ExternalLink,
+  Search,
+  Crop,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
+import { infringementApi } from '@/services/infringementApi';
 import { useEvidence } from '@/hooks/useInfringementData';
 import { getEvidenceTypeLabel, formatDate } from '@/domains/infringement/utils';
 import { EvidenceUploadDialog } from './EvidenceUploadDialog';
+import { SuggestEvidenceDialog } from './SuggestEvidenceDialog';
+import { Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface EvidenceTabProps {
   caseId: string;
@@ -22,13 +30,52 @@ interface EvidenceTabProps {
 }
 
 export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
+  const router = useRouter();
   const { evidence, loading, refresh, deleteEvidence } = useEvidence({ case: caseId });
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [suggestDialogOpen, setSuggestDialogOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const evidenceTypes = useMemo(
+    () => Array.from(new Set(evidence.map((e) => e.evidence_type))),
+    [evidence]
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return evidence.filter((e) => {
+      if (typeFilter !== 'all' && e.evidence_type !== typeFilter) return false;
+      if (!q) return true;
+      return (
+        e.title.toLowerCase().includes(q) ||
+        (e.description || '').toLowerCase().includes(q)
+      );
+    });
+  }, [evidence, search, typeFilter]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
 
   const handleDelete = async (evidenceId: string) => {
     const confirmed = window.confirm('Are you sure you want to delete this evidence?');
     if (!confirmed) return;
     await deleteEvidence(evidenceId);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.size} selected evidence item(s)?`)) return;
+    await Promise.allSettled(Array.from(selectedIds).map((id) => infringementApi.deleteEvidence(id)));
+    setSelectedIds(new Set());
+    refresh();
+    toast.success('Evidence deleted');
   };
 
   return (
@@ -40,11 +87,47 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
             Supporting evidence for this infringement case
           </p>
         </div>
-        <Button onClick={() => setUploadDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Upload Evidence
-        </Button>
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete ({selectedIds.size})
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => setSuggestDialogOpen(true)}>
+            <Sparkles className="h-4 w-4 mr-2" />
+            Find from URL
+          </Button>
+          <Button onClick={() => setUploadDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Upload Evidence
+          </Button>
+        </div>
       </div>
+
+      {evidence.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search evidence…"
+              className="pl-8 h-9"
+            />
+          </div>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All types</option>
+            {evidenceTypes.map((t) => (
+              <option key={t} value={t}>{getEvidenceTypeLabel(t)}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-8">Loading evidence...</div>
@@ -64,11 +147,21 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
         </Card>
       ) : (
         <div className="grid gap-3">
-          {evidence.map((item) => (
+          {filtered.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-6">No evidence matches your filters.</p>
+          )}
+          {filtered.map((item) => (
             <Card key={item.id}>
               <CardContent className="py-4">
                 <div className="flex items-start justify-between">
-                  <div className="flex-1">
+                  <div className="flex items-start gap-3 flex-1">
+                    <input
+                      type="checkbox"
+                      className="mt-1 rounded"
+                      checked={selectedIds.has(item.id)}
+                      onChange={() => toggleSelect(item.id)}
+                    />
+                    <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <FileText className="h-4 w-4 text-muted-foreground" />
                       <span className="font-medium">{item.title}</span>
@@ -81,8 +174,8 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
                       {item.relevance_score > 0 && (
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted-foreground">Relevance:</span>
-                          <Progress value={item.relevance_score} className="w-16 h-2" />
-                          <span className="text-xs font-medium">{item.relevance_score}%</span>
+                          <Progress value={item.relevance_score * 10} className="w-16 h-2" />
+                          <span className="text-xs font-medium">{item.relevance_score}/10</span>
                         </div>
                       )}
                       <span className="text-xs text-muted-foreground">
@@ -104,8 +197,20 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
                         View Source <ExternalLink className="h-3 w-3" />
                       </a>
                     )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
+                    {item.file && item.file.toLowerCase().includes('.pdf') && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/dashboard/infringement/${caseId}/evidence/${item.id}/map`)}
+                        title="Open the evidence mapper to capture regions"
+                      >
+                        <Crop className="h-4 w-4 mr-1" />
+                        Map
+                      </Button>
+                    )}
                     {item.file && (
                       <Button variant="ghost" size="sm" asChild>
                         <a href={item.file} download>
@@ -134,6 +239,12 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
         caseId={caseId}
         caseName={caseName}
         onUploaded={refresh}
+      />
+      <SuggestEvidenceDialog
+        open={suggestDialogOpen}
+        onOpenChange={setSuggestDialogOpen}
+        caseId={caseId}
+        onAdded={refresh}
       />
     </div>
   );

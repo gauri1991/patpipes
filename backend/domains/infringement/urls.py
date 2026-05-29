@@ -9,6 +9,7 @@ from .views import (
     ClaimMappingViewSet,
     ClaimElementViewSet,
     EvidenceViewSet,
+    EvidenceScreenshotViewSet,
     RiskAssessmentViewSet,
     DamagesAnalysisViewSet,
     ExpertOpinionViewSet,
@@ -25,6 +26,7 @@ router.register(r'cases', InfringementCaseViewSet, basename='infringement-case')
 router.register(r'claim-mappings', ClaimMappingViewSet, basename='claim-mapping')
 router.register(r'claim-elements', ClaimElementViewSet, basename='claim-element')
 router.register(r'evidence', EvidenceViewSet, basename='evidence')
+router.register(r'screenshots', EvidenceScreenshotViewSet, basename='evidence-screenshot')
 router.register(r'risk-assessments', RiskAssessmentViewSet, basename='risk-assessment')
 router.register(r'damages-analysis', DamagesAnalysisViewSet, basename='damages-analysis')
 router.register(r'expert-opinions', ExpertOpinionViewSet, basename='expert-opinion')

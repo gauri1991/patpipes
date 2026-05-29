@@ -68,11 +68,58 @@ def _parse_claim_into_elements(claim_text):
 
     return elements
 
+
+def _normalize_patent_claims(claims):
+    """Normalize a Patent.claims list (dicts {number,text} or bare strings) into a
+    list of (claim_number:str, claim_text:str) pairs, skipping empties."""
+    items = []
+    for i, c in enumerate(claims or []):
+        if isinstance(c, dict):
+            text = (c.get('text') or c.get('claim_text') or '').strip()
+            number = str(c.get('number') or c.get('claim_number') or (i + 1))
+        else:
+            text, number = str(c).strip(), str(i + 1)
+        if text:
+            items.append((number, text))
+    return items
+
+
+def _create_claim_mappings(case, claim_items, user):
+    """Create ClaimMappings (+ parsed elements) for a case from (number, text) pairs."""
+    from .models import ClaimMapping, ClaimElement
+    created = []
+    for number, claim_text in claim_items:
+        is_dependent = bool(re.search(r'\bclaim\s+\d+', claim_text, re.IGNORECASE)) and \
+            not claim_text.strip().startswith(f'{number}.')
+        mapping = ClaimMapping.objects.create(
+            case=case,
+            claim_number=str(number),
+            claim_text=claim_text,
+            claim_type='dependent' if is_dependent else 'independent',
+            product_feature='',
+            product_feature_description='',
+            mapping_type='literal',
+            match_confidence=0,
+            limitations_met=False,
+            created_by=user,
+        )
+        for elem in _parse_claim_into_elements(claim_text):
+            ClaimElement.objects.create(
+                claim_mapping=mapping,
+                element_order=elem['order'],
+                element_text=elem['text'],
+                element_type=elem['type'],
+                created_by=user,
+            )
+        created.append(mapping)
+    return created
+
 from .models import (
     InfringementCase,
     ClaimMapping,
     ClaimElement,
     Evidence,
+    EvidenceScreenshot,
     RiskAssessment,
     DamagesAnalysis,
     ExpertOpinion,
@@ -85,6 +132,7 @@ from .serializers import (
     ClaimMappingSerializer,
     ClaimElementSerializer,
     EvidenceSerializer,
+    EvidenceScreenshotSerializer,
     RiskAssessmentSerializer,
     DamagesAnalysisSerializer,
     ExpertOpinionSerializer,
@@ -308,6 +356,168 @@ class InfringementCaseViewSet(viewsets.ModelViewSet):
 
         return export_infringement_report_excel(analysis_data)
 
+    @action(detail=True, methods=['get'], url_path='export-claim-chart-excel')
+    def export_claim_chart_excel(self, request, pk=None):
+        """Export a detailed, element-by-element claim chart as an .xlsx file.
+
+        One row per claim element with met/not-met, accused feature, confidence, and
+        resolved evidence citations — the professional claim-chart artifact buyers expect.
+        """
+        import io
+        from django.http import HttpResponse
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        case = self.get_object()
+
+        # Resolve evidence ids -> titles once for citation cells.
+        ev_titles = {str(e.id): e.title for e in case.evidence.all()}
+
+        def met_label(v):
+            return 'Met' if v is True else ('Not Met' if v is False else 'Unknown')
+
+        FILLS = {
+            'Met': PatternFill('solid', fgColor='C6EFCE'),
+            'Not Met': PatternFill('solid', fgColor='FFC7CE'),
+            'Unknown': PatternFill('solid', fgColor='FFEB9C'),
+        }
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Claim Chart'
+        headers = ['Claim', 'Element #', 'Element Text', 'Type', 'Status',
+                   'Accused Feature', 'Confidence', 'Analysis Notes', 'Citations', 'Review']
+        ws.append(headers)
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill('solid', fgColor='1F2937')
+        for col, _ in enumerate(headers, start=1):
+            c = ws.cell(row=1, column=col)
+            c.font = header_font
+            c.fill = header_fill
+            c.alignment = Alignment(vertical='top', wrap_text=True)
+
+        for cm in case.claim_mappings.all().order_by('claim_number'):
+            elements = list(cm.elements.all().order_by('element_order'))
+            if not elements:
+                # mapping-level row when no elements parsed
+                ws.append([cm.claim_number, '', cm.claim_text, cm.claim_type,
+                           'Met' if cm.limitations_met else 'Unknown', cm.product_feature,
+                           f'{cm.match_confidence}%', cm.analysis_notes or '',
+                           '; '.join(ev_titles.get(str(i), str(i)) for i in (cm.evidence_references or [])),
+                           cm.review_status or ''])
+                continue
+            for el in elements:
+                status_label = met_label(el.meets_limitation)
+                cites = '; '.join(ev_titles.get(str(i), str(i)) for i in (el.evidence_references or []))
+                ws.append([
+                    cm.claim_number, el.element_order, el.element_text, el.element_type,
+                    status_label, el.accused_feature or '',
+                    f'{el.doe_score}%' if el.doe_score is not None else f'{cm.match_confidence}%',
+                    el.analysis_notes or '', cites, el.review_status or '',
+                ])
+                ws.cell(row=ws.max_row, column=5).fill = FILLS.get(status_label, FILLS['Unknown'])
+
+        # Column widths + wrapping for readability
+        widths = [10, 9, 60, 12, 10, 40, 11, 40, 30, 10]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(vertical='top', wrap_text=True)
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        safe_name = (case.case_number or str(case.id)[:8])
+        resp = HttpResponse(
+            buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        resp['Content-Disposition'] = f'attachment; filename="claim_chart_{safe_name}.xlsx"'
+        return resp
+
+    @action(detail=True, methods=['post'], url_path='extract-claim-terms')
+    def extract_claim_terms(self, request, pk=None):
+        """Extract antecedent-basis claim terms and assign consistent colors (heuristic /
+        spaCy). Preserves existing colors; returns the case-wide term→color map."""
+        from .claim_term_service import extract_claim_terms as _extract
+        case = self.get_object()
+        color_map = _extract(case, strategy=request.data.get('strategy', 'antecedent'))
+        return Response({'claim_term_colors': color_map, 'count': len(color_map)})
+
+    @action(detail=True, methods=['post'], url_path='set-term-color')
+    def set_term_color(self, request, pk=None):
+        """Manually override one term's color (merges into the case map)."""
+        case = self.get_object()
+        term = (request.data.get('term') or '').strip().lower()
+        color = (request.data.get('color') or '').strip()
+        if not term or not color:
+            return Response({'error': 'term and color are required'}, status=status.HTTP_400_BAD_REQUEST)
+        m = dict(case.claim_term_colors or {})
+        m[term] = color
+        case.claim_term_colors = m
+        case.save(update_fields=['claim_term_colors', 'updated_at'])
+        return Response({'claim_term_colors': m})
+
+    @action(detail=True, methods=['post'], url_path='add-term')
+    def add_term(self, request, pk=None):
+        """Add a missed claim term (normalized) with a color; un-excludes it."""
+        from .claim_term_service import _normalize, PALETTE
+        case = self.get_object()
+        term = _normalize(request.data.get('term') or '')
+        if not term:
+            return Response({'error': 'term is required'}, status=status.HTTP_400_BAD_REQUEST)
+        m = dict(case.claim_term_colors or {})
+        ex = [t for t in (case.claim_term_excluded or []) if t != term]
+        if term not in m:
+            color = (request.data.get('color') or '').strip()
+            if not color:
+                used = set(m.values())
+                color = next((c for c in PALETTE if c not in used), PALETTE[len(m) % len(PALETTE)])
+            m[term] = color
+        case.claim_term_colors = m
+        case.claim_term_excluded = ex
+        case.save(update_fields=['claim_term_colors', 'claim_term_excluded', 'updated_at'])
+        return Response({'claim_term_colors': m, 'claim_term_excluded': ex})
+
+    @action(detail=True, methods=['post'], url_path='remove-term')
+    def remove_term(self, request, pk=None):
+        """Remove a term and exclude it so auto-extraction won't re-add it."""
+        case = self.get_object()
+        term = (request.data.get('term') or '').strip().lower()
+        m = dict(case.claim_term_colors or {})
+        m.pop(term, None)
+        ex = list(case.claim_term_excluded or [])
+        if term and term not in ex:
+            ex.append(term)
+        case.claim_term_colors = m
+        case.claim_term_excluded = ex
+        case.save(update_fields=['claim_term_colors', 'claim_term_excluded', 'updated_at'])
+        return Response({'claim_term_colors': m, 'claim_term_excluded': ex})
+
+    @action(detail=True, methods=['post'], url_path='rename-term')
+    def rename_term(self, request, pk=None):
+        """Rename a term; if the new term already exists this merges them (one color).
+        The old phrase is excluded so it isn't re-detected."""
+        from .claim_term_service import _normalize
+        case = self.get_object()
+        old = (request.data.get('term') or '').strip().lower()
+        new = _normalize(request.data.get('new_term') or '')
+        if not old or not new:
+            return Response({'error': 'term and new_term are required'}, status=status.HTTP_400_BAD_REQUEST)
+        m = dict(case.claim_term_colors or {})
+        ex = list(case.claim_term_excluded or [])
+        color = m.pop(old, None)
+        if new not in m:  # rename; if new exists it's a merge → keep new's color
+            m[new] = color or '#EF4444'
+        if old and old != new and old not in ex:
+            ex.append(old)
+        ex = [t for t in ex if t != new]
+        case.claim_term_colors = m
+        case.claim_term_excluded = ex
+        case.save(update_fields=['claim_term_colors', 'claim_term_excluded', 'updated_at'])
+        return Response({'claim_term_colors': m, 'claim_term_excluded': ex})
+
     @action(detail=True, methods=['get'])
     def ptab_proceedings(self, request, pk=None):
         """Search ODP PTAB proceedings related to the case's patent number."""
@@ -342,13 +552,39 @@ class InfringementCaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='auto-import-claims')
     def auto_import_claims(self, request, pk=None):
-        """Auto-import patent claims from USPTO ODP if none exist locally."""
-        case = self.get_object()
+        """Import patent claims for the case.
 
-        # Quick-check: if claims already exist, return them
-        if case.claim_mappings.exists():
+        Source of truth, in order: (1) the linked Patent's locally-stored claims
+        (authoritative, no network, correct for enriched/seed patents), then
+        (2) USPTO ODP full text. Pass force=true to replace existing mappings
+        (e.g. when the current ones are stale/mismatched).
+        """
+        case = self.get_object()
+        force = bool(request.data.get('force', False))
+
+        # If claims already exist and we're not forcing a refresh, return them.
+        if case.claim_mappings.exists() and not force:
             serializer = ClaimMappingSerializer(case.claim_mappings.all().order_by('claim_number'), many=True)
             return Response({'status': 'existing', 'claim_mappings': serializer.data})
+
+        # (1) Prefer the linked Patent's local claims when available.
+        local_items = _normalize_patent_claims(getattr(case.patent, 'claims', None)) if case.patent else []
+        if local_items:
+            with transaction.atomic():
+                locked_case = InfringementCase.objects.select_for_update().get(pk=case.pk)
+                if locked_case.claim_mappings.exists():
+                    if not force:
+                        serializer = ClaimMappingSerializer(locked_case.claim_mappings.all().order_by('claim_number'), many=True)
+                        return Response({'status': 'existing', 'claim_mappings': serializer.data})
+                    locked_case.claim_mappings.all().delete()
+                created = _create_claim_mappings(locked_case, local_items, request.user)
+            serializer = ClaimMappingSerializer(created, many=True)
+            return Response({
+                'status': 'imported',
+                'source': 'patent',
+                'claim_mappings': serializer.data,
+                'count': len(created),
+            })
 
         patent_number = case.patent_number
         if not patent_number:
@@ -440,42 +676,20 @@ class InfringementCaseViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 locked_case = InfringementCase.objects.select_for_update().get(pk=case.pk)
                 if locked_case.claim_mappings.exists():
-                    serializer = ClaimMappingSerializer(locked_case.claim_mappings.all().order_by('claim_number'), many=True)
-                    return Response({'status': 'existing', 'claim_mappings': serializer.data})
+                    if not force:
+                        serializer = ClaimMappingSerializer(locked_case.claim_mappings.all().order_by('claim_number'), many=True)
+                        return Response({'status': 'existing', 'claim_mappings': serializer.data})
+                    locked_case.claim_mappings.all().delete()
 
-                created_mappings = []
-                for idx, claim_text in enumerate(claims):
-                    # Detect dependent vs independent claims
-                    is_dependent = bool(re.search(
-                        r'\bclaim\s+\d+', claim_text, re.IGNORECASE
-                    )) and not claim_text.strip().startswith('1.')
-                    mapping = ClaimMapping.objects.create(
-                        case=locked_case,
-                        claim_number=str(idx + 1),
-                        claim_text=claim_text,
-                        claim_type='dependent' if is_dependent else 'independent',
-                        product_feature='',
-                        product_feature_description='',
-                        mapping_type='literal',
-                        match_confidence=0,
-                        limitations_met=False,
-                        created_by=request.user,
-                    )
-                    # Auto-parse claim text into elements
-                    parsed = _parse_claim_into_elements(claim_text)
-                    for elem in parsed:
-                        ClaimElement.objects.create(
-                            claim_mapping=mapping,
-                            element_order=elem['order'],
-                            element_text=elem['text'],
-                            element_type=elem['type'],
-                            created_by=request.user,
-                        )
-                    created_mappings.append(mapping)
+                # ODP returns a list of claim-text strings; number them sequentially.
+                created_mappings = _create_claim_mappings(
+                    locked_case, [(str(i + 1), t) for i, t in enumerate(claims)], request.user
+                )
 
             serializer = ClaimMappingSerializer(created_mappings, many=True)
             return Response({
                 'status': 'imported',
+                'source': 'odp',
                 'claim_mappings': serializer.data,
                 'count': len(created_mappings),
             })
@@ -505,25 +719,89 @@ class ClaimMappingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='parse-elements')
     def parse_elements(self, request, pk=None):
-        """Auto-parse claim text into elements. Replaces any existing elements."""
+        """Auto-parse claim text into elements. Replaces any existing elements.
+
+        use_llm=True opts into the gated LLM parser (dormant until the master switch
+        INFRINGEMENT_AI_LLM_ENABLED is on); otherwise heuristic structural parsing.
+        """
         claim_mapping = self.get_object()
         if not claim_mapping.claim_text:
             return Response({'error': 'No claim text to parse'}, status=status.HTTP_400_BAD_REQUEST)
 
+        use_llm = bool(request.data.get('use_llm', False))
+
         # Delete existing elements and re-parse
         claim_mapping.elements.all().delete()
-        parsed = _parse_claim_into_elements(claim_mapping.claim_text)
+        parsed = ai_service.parse_claim_elements(claim_mapping.claim_text, use_llm=use_llm)
         created = []
         for elem in parsed:
             created.append(ClaimElement.objects.create(
                 claim_mapping=claim_mapping,
-                element_order=elem['order'],
-                element_text=elem['text'],
-                element_type=elem['type'],
+                element_order=elem['element_order'],
+                element_text=elem['element_text'],
+                element_type=elem['element_type'],
+                is_ai_generated=use_llm,
+                review_status='ai_draft' if use_llm else 'confirmed',
                 created_by=request.user,
             ))
         serializer = ClaimElementSerializer(created, many=True)
-        return Response({'elements': serializer.data, 'count': len(created)})
+        return Response({'elements': serializer.data, 'count': len(created), 'ai_draft': use_llm})
+
+    @action(detail=True, methods=['post'], url_path='generate-mapping')
+    def generate_mapping(self, request, pk=None):
+        """Draft an element-by-element claim→product mapping for analyst review.
+
+        Replaces existing elements with drafts. With use_llm=True (and the master
+        switch on) the LLM fills accused-feature + met/not-met + rationale per element;
+        otherwise it returns a heuristic element split for the analyst to complete.
+        AI output is flagged review_status='ai_draft'.
+        """
+        claim_mapping = self.get_object()
+        if not claim_mapping.claim_text:
+            return Response({'error': 'No claim text to map'}, status=status.HTTP_400_BAD_REQUEST)
+
+        use_llm = bool(request.data.get('use_llm', False))
+        product_desc = (
+            request.data.get('product_description')
+            or claim_mapping.case.accused_product_description
+            or ''
+        )
+
+        result = ai_service.generate_claim_mapping(
+            claim_mapping.claim_text, product_desc, use_llm=use_llm
+        )
+
+        claim_mapping.elements.all().delete()
+        created = []
+        for elem in result.get('elements', []):
+            created.append(ClaimElement.objects.create(
+                claim_mapping=claim_mapping,
+                element_order=elem['element_order'],
+                element_text=elem['element_text'],
+                element_type=elem['element_type'],
+                accused_feature=elem.get('accused_feature', ''),
+                meets_limitation=elem.get('meets_limitation'),
+                analysis_notes=elem.get('analysis_notes', ''),
+                is_ai_generated=use_llm,
+                review_status='ai_draft' if use_llm else 'confirmed',
+                created_by=request.user,
+            ))
+
+        # Flag the mapping itself as an AI draft pending review.
+        if use_llm:
+            claim_mapping.is_ai_generated = True
+            claim_mapping.review_status = 'ai_draft'
+            if result.get('summary') and not claim_mapping.analysis_notes:
+                claim_mapping.analysis_notes = result['summary']
+            claim_mapping.save(update_fields=['is_ai_generated', 'review_status', 'analysis_notes', 'updated_at'])
+
+        serializer = ClaimElementSerializer(created, many=True)
+        return Response({
+            'summary': result.get('summary', ''),
+            'elements': serializer.data,
+            'count': len(created),
+            'ai_draft': use_llm,
+        })
 
     @action(detail=True, methods=['get'])
     def elements(self, request, pk=None):
@@ -649,6 +927,69 @@ class EvidenceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+    @action(detail=False, methods=['post'], url_path='suggest-from-url')
+    def suggest_from_url(self, request):
+        """Assisted evidence sourcing: fetch a product URL server-side, extract text,
+        and return ranked candidate passages for the analyst to review/save.
+
+        Body: { url, claim_mapping_id? | claim_text?, use_llm? }. Nothing is persisted —
+        candidates are returned for the analyst to turn into Evidence. LLM ranking only
+        runs when use_llm=True AND the master switch is on; otherwise heuristic overlap.
+        """
+        import requests
+        from bs4 import BeautifulSoup
+
+        url = (request.data.get('url') or '').strip()
+        if not url or not url.lower().startswith(('http://', 'https://')):
+            return Response({'error': 'A valid http(s) url is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Resolve claim context for relevance ranking.
+        claim_text = request.data.get('claim_text', '')
+        cm_id = request.data.get('claim_mapping_id')
+        if cm_id and not claim_text:
+            cm = ClaimMapping.objects.filter(id=cm_id).first()
+            if cm:
+                claim_text = cm.claim_text
+
+        try:
+            resp = requests.get(url, timeout=10, headers={'User-Agent': 'PatentAnalytics/1.0'})
+            resp.raise_for_status()
+        except Exception as exc:
+            return Response({'error': f'Failed to fetch URL: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        soup = BeautifulSoup(resp.text[:500000], 'html.parser')
+        for tag in soup(['script', 'style', 'noscript', 'header', 'footer', 'nav']):
+            tag.decompose()
+        page_title = (soup.title.string.strip() if soup.title and soup.title.string else url)
+        text = soup.get_text(separator='\n')
+
+        candidates = ai_service.suggest_evidence_passages(
+            text, claim_text=claim_text, use_llm=bool(request.data.get('use_llm', False))
+        )
+        return Response({
+            'source_url': url,
+            'title': page_title[:255],
+            'candidates': candidates,
+            'count': len(candidates),
+        })
+
+
+class EvidenceScreenshotViewSet(viewsets.ModelViewSet):
+    """ViewSet for evidence-of-use screenshots (cropped PDF regions mapped to claim
+    elements). Created via multipart (image + page + bbox + repeated claim_elements)."""
+    queryset = EvidenceScreenshot.objects.all().select_related('evidence', 'created_by').prefetch_related('claim_elements')
+    serializer_class = EvidenceScreenshotSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['case', 'evidence', 'claim_elements']
+    ordering_fields = ['created_at', 'page_number']
+    ordering = ['-created_at']
+
+    def perform_create(self, serializer):
+        # case is derived from the source evidence so the client needn't send it.
+        evidence = serializer.validated_data.get('evidence')
+        serializer.save(created_by=self.request.user, case=evidence.case)
 
 
 class RiskAssessmentViewSet(viewsets.ModelViewSet):
@@ -1004,7 +1345,8 @@ class AIAnalysisViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        elements = ai_service.parse_claim_elements(claim_text)
+        use_llm = bool(request.data.get('use_llm', False))
+        elements = ai_service.parse_claim_elements(claim_text, use_llm=use_llm)
         return Response({'elements': elements})
 
     @action(detail=False, methods=['post'], url_path='score-evidence')
@@ -1032,7 +1374,8 @@ class AIAnalysisViewSet(viewsets.ViewSet):
 
         result = ai_service.score_evidence_relevance(
             evidence.description,
-            claim_mapping.claim_text
+            claim_mapping.claim_text,
+            use_llm=bool(request.data.get('use_llm', False)),
         )
 
         return Response(result)
@@ -1060,7 +1403,8 @@ class AIAnalysisViewSet(viewsets.ViewSet):
 
         result = ai_service.analyze_doe_similarity(
             element.element_text,
-            element.accused_feature or ''
+            element.accused_feature or '',
+            use_llm=bool(request.data.get('use_llm', False)),
         )
 
         return Response(result)
