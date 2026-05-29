@@ -43,6 +43,7 @@ import { DoeAnalysisDialog } from './DoeAnalysisDialog';
 import { LinkEvidenceDialog } from './LinkEvidenceDialog';
 import { HighlightedText } from './HighlightedText';
 import { ClaimTermsManager } from './ClaimTermsManager';
+import { stripClaimMarkup } from '@/domains/infringement/lib/claimText';
 import { Link2, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -387,8 +388,8 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
   };
 
   const formatClaimText = (text: string) => {
-    // Strip leading claim number
-    const stripped = text.replace(/^\d+\.\s*/, '');
+    // Strip inline markup (e.g. <b>1</b> from older imports), then the leading claim number
+    const stripped = stripClaimMarkup(text).replace(/^\d+\.\s*/, '');
     // Split on transition phrase (comprising:, consisting of:, etc.)
     const transitionMatch = stripped.match(
       /^(.*?\b(?:comprising|consisting\s+(?:essentially\s+)?of|including|wherein|characterized\s+in\s+that)\s*:\s*)([\s\S]*)/i
@@ -567,7 +568,7 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                         <Badge variant="secondary" className="text-xs">{m.claim_type}</Badge>
                       </td>
                       <td className="p-3">
-                        <p className="text-sm line-clamp-2">{m.claim_text}</p>
+                        <p className="text-sm line-clamp-2">{stripClaimMarkup(m.claim_text)}</p>
                       </td>
                       <td className="p-3">
                         <p className="text-sm font-medium line-clamp-1">{m.product_feature}</p>

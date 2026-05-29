@@ -8,6 +8,7 @@
  */
 
 import React, { useMemo } from 'react';
+import { stripClaimMarkup } from '@/domains/infringement/lib/claimText';
 
 interface HighlightedTextProps {
   text: string;
@@ -44,7 +45,9 @@ function tint(hex: string, alpha: number) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
-export function HighlightedText({ text, termColors, className, onTermClick }: HighlightedTextProps) {
+export function HighlightedText({ text: rawText, termColors, className, onTermClick }: HighlightedTextProps) {
+  // Strip any leftover inline markup (e.g. <b>1</b>) from claims imported by older parsers.
+  const text = stripClaimMarkup(rawText);
   const parts = useMemo(() => {
     const terms = Object.keys(termColors || {}).filter(Boolean).sort((a, b) => b.length - a.length);
     if (!text || terms.length === 0) return [{ t: text || '', c: null as string | null }];

@@ -108,6 +108,17 @@ def _ptab_cached(endpoint, patent_number, method_name, ttl_hours=24):
     return Response(data)
 
 
+def _strip_markup(text):
+    """Remove inline HTML/XML tags (e.g. <b>1</b>, <sub>) and decode a few entities.
+    Defensive: the current XML parser already strips tags, but claims imported by older
+    parser versions can carry raw markup."""
+    if not text:
+        return ''
+    text = re.sub(r'<[^>]+>', '', text)
+    return (text.replace('&nbsp;', ' ').replace('&amp;', '&')
+                .replace('&lt;', '<').replace('&gt;', '>').strip())
+
+
 def _parse_claim_into_elements(claim_text):
     """Parse patent claim text into structured elements (preamble + body limitations).
 
@@ -177,6 +188,7 @@ def _create_claim_mappings(case, claim_items, user):
     from .models import ClaimMapping, ClaimElement
     created = []
     for number, claim_text in claim_items:
+        claim_text = _strip_markup(claim_text)
         is_dependent = bool(re.search(r'\bclaim\s+\d+', claim_text, re.IGNORECASE)) and \
             not claim_text.strip().startswith(f'{number}.')
         mapping = ClaimMapping.objects.create(
