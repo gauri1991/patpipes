@@ -55,50 +55,68 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         return response
 
 
+def build_token_response(user):
+    """Issue JWT access/refresh tokens + the standard auth payload for a user.
+
+    Shared by the password-login path (no 2FA) and the post-OTP verification path so
+    both return an identical session shape to the frontend.
+    """
+    refresh = RefreshToken.for_user(user)
+    access_token = refresh.access_token
+
+    # Add custom claims
+    access_token['email'] = user.email
+    access_token['role'] = user.role
+    access_token['full_name'] = user.full_name
+    access_token['organization_id'] = str(user.organization_id) if user.organization else None
+
+    # Update last login
+    user.last_login_at = timezone.now()
+    user.save(update_fields=['last_login_at'])
+
+    return {
+        'user': {
+            'id': str(user.id),
+            'email': user.email,
+            'firstName': user.first_name,
+            'lastName': user.last_name,
+            'role': user.role,
+            'organizationId': str(user.organization_id) if user.organization else None,
+            'permissions': []  # Will be populated with actual permissions
+        },
+        'tokens': {
+            'accessToken': str(access_token),
+            'refreshToken': str(refresh),
+            'expiresIn': 3600,  # 1 hour
+            'tokenType': 'Bearer'
+        },
+        'sessionId': str(user.id),  # Simple session ID for now
+        'expiresAt': timezone.now() + timezone.timedelta(hours=1)
+    }
+
+
 class LoginView(APIView):
     """Login API view"""
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={'request': request})
-        
+
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            
-            # Generate JWT tokens
-            refresh = RefreshToken.for_user(user)
-            access_token = refresh.access_token
-            
-            # Add custom claims
-            access_token['email'] = user.email
-            access_token['role'] = user.role
-            access_token['full_name'] = user.full_name
-            access_token['organization_id'] = str(user.organization_id) if user.organization else None
-            
-            # Update last login
-            user.last_login_at = timezone.now()
-            user.save(update_fields=['last_login_at'])
-            
-            return Response({
-                'user': {
-                    'id': str(user.id),
-                    'email': user.email,
-                    'firstName': user.first_name,
-                    'lastName': user.last_name,
-                    'role': user.role,
-                    'organizationId': str(user.organization_id) if user.organization else None,
-                    'permissions': []  # Will be populated with actual permissions
-                },
-                'tokens': {
-                    'accessToken': str(access_token),
-                    'refreshToken': str(refresh),
-                    'expiresIn': 3600,  # 1 hour
-                    'tokenType': 'Bearer'
-                },
-                'sessionId': str(user.id),  # Simple session ID for now
-                'expiresAt': timezone.now() + timezone.timedelta(hours=1)
-            }, status=status.HTTP_200_OK)
-        
+
+            # If the user has verified 2FA, require an OTP step before issuing tokens.
+            # No tokens are returned here — the client must call /auth/2fa/verify-login/.
+            from .models import TwoFactorAuth
+            if TwoFactorAuth.objects.filter(user=user, is_verified=True).exists():
+                return Response({
+                    'requiresOtp': True,
+                    'userId': str(user.id),
+                    'message': 'Enter the 6-digit code from your authenticator app.'
+                }, status=status.HTTP_200_OK)
+
+            return Response(build_token_response(user), status=status.HTTP_200_OK)
+
         return Response({
             'message': 'Invalid credentials',
             'errors': serializer.errors

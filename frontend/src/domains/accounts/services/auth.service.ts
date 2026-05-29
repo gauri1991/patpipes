@@ -14,6 +14,8 @@ import {
   ChangePasswordRequest,
   TwoFactorAuthSetup,
   TwoFactorAuthVerification,
+  TwoFactorStatus,
+  OtpChallenge,
   SessionActivity
 } from '../types/auth.types';
 
@@ -66,17 +68,14 @@ class AuthService {
   }
 
   /**
-   * Login with email and password
+   * Build an AuthSession from a backend login/verify-login payload and persist it.
+   * Shared by login() (no 2FA) and verifyLoginOtp() (post-OTP).
    */
-  async login(credentials: LoginCredentials): Promise<AuthSession> {
-    const response = await this.api.post('/auth/login/', credentials);
-
-    // Backend returns { access_token, refresh_token, user: { id, email, first_name, last_name, role } }
-    const data = response.data;
+  private buildAndSaveSession(data: any): AuthSession {
     const tokens: AuthTokens = {
       accessToken: data.access_token || data.tokens?.accessToken || '',
       refreshToken: data.refresh_token || data.tokens?.refreshToken || '',
-      expiresIn: data.expires_in || 3600,
+      expiresIn: data.expires_in || data.tokens?.expiresIn || 3600,
       tokenType: 'Bearer',
     };
 
@@ -98,6 +97,34 @@ class AuthService {
 
     this.saveSession(sessionData);
     return sessionData;
+  }
+
+  /**
+   * Login with email and password.
+   * If the account has 2FA enabled, returns an OtpChallenge (no tokens) and the
+   * caller must follow up with verifyLoginOtp(). Otherwise returns a live session.
+   */
+  async login(credentials: LoginCredentials): Promise<AuthSession | OtpChallenge> {
+    const response = await this.api.post('/auth/login/', credentials);
+    const data = response.data;
+
+    if (data.requiresOtp) {
+      return { requiresOtp: true, userId: data.userId };
+    }
+
+    return this.buildAndSaveSession(data);
+  }
+
+  /**
+   * Complete a 2FA login: verify the TOTP/backup code for the pending user and,
+   * on success, persist the issued session.
+   */
+  async verifyLoginOtp(userId: string, code: string): Promise<AuthSession> {
+    const response = await this.api.post('/auth/2fa/verify-login/', { user_id: userId, code });
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Invalid verification code');
+    }
+    return this.buildAndSaveSession(response.data);
   }
 
   /**
@@ -215,28 +242,59 @@ class AuthService {
   }
 
   /**
-   * Setup two-factor authentication
-   * Note: 2FA endpoints not yet implemented on backend
+   * Get the current 2FA status for the authenticated user.
+   */
+  async getTwoFactorStatus(): Promise<TwoFactorStatus> {
+    const response = await this.api.get('/auth/2fa/status/');
+    const d = response.data?.data || {};
+    return {
+      enabled: !!d.enabled,
+      backupCodesCount: d.backup_codes_count || 0,
+      lastUsed: d.last_used || null,
+    };
+  }
+
+  /**
+   * Begin 2FA setup — returns the secret + QR code to scan. Not yet enabled
+   * until verifyTwoFactorSetup() confirms a code.
    */
   async setupTwoFactorAuth(): Promise<TwoFactorAuthSetup> {
-    const response = await this.api.post<TwoFactorAuthSetup>('/auth/2fa/setup/');
-    return response.data;
+    const response = await this.api.post('/auth/2fa/setup/');
+    const d = response.data?.data || {};
+    return { secret: d.secret, qrCode: d.qr_code };
   }
 
   /**
-   * Verify two-factor authentication code
-   * Note: 2FA endpoints not yet implemented on backend
+   * Confirm 2FA setup with a code from the authenticator app.
+   * On success the backend enables 2FA and returns one-time backup codes.
    */
-  async verifyTwoFactorAuth(data: TwoFactorAuthVerification): Promise<void> {
-    await this.api.post('/auth/2fa/verify/', data);
+  async verifyTwoFactorSetup(code: string): Promise<string[]> {
+    const response = await this.api.post('/auth/2fa/verify/', { code });
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Invalid verification code');
+    }
+    return response.data.backup_codes || [];
   }
 
   /**
-   * Disable two-factor authentication
-   * Note: 2FA endpoints not yet implemented on backend
+   * Disable 2FA — requires the account password (and optionally a current code).
    */
-  async disableTwoFactorAuth(password: string): Promise<void> {
-    await this.api.post('/auth/2fa/disable/', { password });
+  async disableTwoFactorAuth(password: string, code?: string): Promise<void> {
+    const response = await this.api.post('/auth/2fa/disable/', { password, code });
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Failed to disable 2FA');
+    }
+  }
+
+  /**
+   * Regenerate backup codes — requires a current authenticator code.
+   */
+  async regenerateBackupCodes(code: string): Promise<string[]> {
+    const response = await this.api.post('/auth/2fa/backup-codes/', { code });
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Failed to regenerate backup codes');
+    }
+    return response.data.backup_codes || [];
   }
 
   /**

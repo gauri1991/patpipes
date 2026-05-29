@@ -60,14 +60,25 @@ export interface ChangePasswordRequest {
 }
 
 export interface TwoFactorAuthSetup {
-  secret: string;
-  qrCode: string;
-  backupCodes: string[];
+  secret: string;       // base32 secret for manual entry
+  qrCode: string;       // data:image/png;base64,... QR to scan
 }
 
 export interface TwoFactorAuthVerification {
   code: string;
   trustDevice?: boolean;
+}
+
+export interface TwoFactorStatus {
+  enabled: boolean;
+  backupCodesCount: number;
+  lastUsed: string | null;
+}
+
+/** Returned by login() when the account has 2FA enabled — no tokens issued yet. */
+export interface OtpChallenge {
+  requiresOtp: true;
+  userId: string;
 }
 
 export interface SSOProvider {

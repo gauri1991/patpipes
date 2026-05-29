@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { motion } from 'framer-motion';
-import { Loader2, User, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Loader2, User, Lock, AlertCircle, Eye, EyeOff, ShieldCheck, ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,9 +26,13 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, isLoading } = useAuth();
+  const { login, verifyOtp, cancelOtp, otpRequired, isLoading } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // OTP step state
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
 
   const {
     register,
@@ -42,7 +46,11 @@ export default function LoginPage() {
     try {
       setError(null);
       // Use the Zustand store login method which accepts username or email
-      await login(data.username, data.password);
+      const result = await login(data.username, data.password);
+      if (result.requiresOtp) {
+        // Don't redirect — the OTP step renders next (driven by otpRequired).
+        return;
+      }
       toast.success('Login successful! Redirecting to dashboard...');
       router.push('/dashboard');
     } catch (error) {
@@ -50,6 +58,29 @@ export default function LoginPage() {
       setError(errorMessage);
       toast.error(errorMessage);
     }
+  };
+
+  const onVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setOtpSubmitting(true);
+    try {
+      await verifyOtp(otpCode.trim());
+      toast.success('Verified! Redirecting to dashboard...');
+      router.push('/dashboard');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Invalid verification code';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setOtpSubmitting(false);
+    }
+  };
+
+  const backToLogin = () => {
+    cancelOtp();
+    setOtpCode('');
+    setError(null);
   };
 
   return (
@@ -92,6 +123,71 @@ export default function LoginPage() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, delay: 0.3 }}
         >
+          {otpRequired ? (
+            <Card className="shadow-2xl border border-neutral-200 bg-white backdrop-blur-sm">
+              <form onSubmit={onVerifyOtp}>
+                <CardHeader>
+                  <CardTitle className="text-2xl font-bold text-neutral-900 flex items-center gap-2">
+                    <ShieldCheck className="h-6 w-6 text-cyan-600" />
+                    Two-Factor Verification
+                  </CardTitle>
+                  <CardDescription className="text-neutral-600">
+                    Enter the 6-digit code from your authenticator app. You can also use a backup code.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  {error && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
+                      <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" />
+                      <div className="text-sm">{error}</div>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="otpCode">Verification code</Label>
+                    <Input
+                      id="otpCode"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      autoFocus
+                      placeholder="123456"
+                      className="text-center text-lg tracking-[0.5em]"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value)}
+                      disabled={otpSubmitting}
+                    />
+                  </div>
+                </CardContent>
+
+                <CardFooter className="flex flex-col space-y-3">
+                  <Button
+                    type="submit"
+                    className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white transition-all duration-300"
+                    size="lg"
+                    disabled={otpSubmitting || otpCode.trim().length === 0}
+                  >
+                    {otpSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Verifying...
+                      </>
+                    ) : (
+                      'Verify & Sign In'
+                    )}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={backToLogin}
+                    className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors flex items-center gap-1"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    Back to login
+                  </button>
+                </CardFooter>
+              </form>
+            </Card>
+          ) : (
           <Card className="shadow-2xl border border-neutral-200 bg-white backdrop-blur-sm">
             <form onSubmit={handleSubmit(onSubmit)}>
               <CardHeader>
@@ -223,6 +319,7 @@ export default function LoginPage() {
             </CardFooter>
           </form>
         </Card>
+          )}
         </motion.div>
       </motion.div>
       </div>

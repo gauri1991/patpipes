@@ -14,7 +14,8 @@ import {
   Palette, 
   Clock, 
   Globe, 
-  Key, 
+  Key,
+  ShieldCheck,
   Database,
   Mail,
   Smartphone,
@@ -53,6 +54,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
+import { TwoFactorSettings } from './TwoFactorSettings';
 import { 
   Dialog,
   DialogContent,
@@ -193,7 +195,9 @@ export function SettingsPage() {
     setIsSaving(true);
     try {
       const updatedSettings = await authService.updateUserSettings(settings);
-      setSettings(updatedSettings);
+      // Merge rather than replace — the backend response may omit fields, which
+      // would otherwise wipe defaults (e.g. itemsPerPage) and crash the page.
+      setSettings(prev => ({ ...prev, ...updatedSettings }));
       // TODO: Show success notification
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -912,8 +916,8 @@ export function SettingsPage() {
 
                   <div className="space-y-2">
                     <Label className="text-sm">Items per Page</Label>
-                    <Select 
-                      value={settings.itemsPerPage.toString()} 
+                    <Select
+                      value={settings.itemsPerPage?.toString() || '20'}
                       onValueChange={(value) => setSettings(prev => ({ ...prev, itemsPerPage: parseInt(value) }))}
                     >
                       <SelectTrigger>
@@ -1210,6 +1214,16 @@ export function SettingsPage() {
                       </DialogContent>
                     </Dialog>
                   </div>
+                </div>
+
+                <Separator />
+
+                <div>
+                  <h3 className="text-lg font-medium flex items-center gap-2 mb-4">
+                    <ShieldCheck className="w-5 h-5" />
+                    Two-Factor Authentication
+                  </h3>
+                  <TwoFactorSettings />
                 </div>
 
                 <Separator />

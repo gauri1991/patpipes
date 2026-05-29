@@ -7,12 +7,12 @@ import pyotp
 import qrcode
 import io
 import base64
-from datetime import datetime
 
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from .models import TwoFactorAuth, UserSettings
@@ -115,7 +115,7 @@ def verify_2fa(request):
     if not totp.verify(code, valid_window=1):  # Allow 1 window tolerance
         # Check backup codes
         if two_factor.use_backup_code(code):
-            two_factor.last_used_at = datetime.now()
+            two_factor.last_used_at = timezone.now()
             two_factor.save()
             return Response({
                 'success': True,
@@ -149,7 +149,7 @@ def verify_2fa(request):
         })
 
     # Regular verification (e.g., during login)
-    two_factor.last_used_at = datetime.now()
+    two_factor.last_used_at = timezone.now()
     two_factor.save()
 
     return Response({
@@ -287,10 +287,12 @@ def regenerate_backup_codes(request):
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def verify_2fa_login(request):
     """
-    Verify 2FA during login process (called after password verification)
-    Expects user_id and code in request
+    Verify 2FA during login process (called after password verification).
+    Runs pre-authentication, so it must allow unauthenticated access.
+    Expects user_id and code in request.
     """
     from .models import User
 
@@ -325,18 +327,21 @@ def verify_2fa_login(request):
             'message': '2FA setup is not complete'
         }, status=status.HTTP_400_BAD_REQUEST)
 
+    # Token issuance is shared with the password-login path.
+    from .views import build_token_response
+
     # Verify the TOTP code
     totp = pyotp.TOTP(two_factor.secret_key)
     if not totp.verify(code, valid_window=1):
         # Check backup codes
         if two_factor.use_backup_code(code):
-            two_factor.last_used_at = datetime.now()
+            two_factor.last_used_at = timezone.now()
             two_factor.save()
             return Response({
                 'success': True,
                 'message': 'Verified with backup code',
-                'user_id': str(user.id),
-                'requires_new_backup_codes': len(two_factor.backup_codes) <= 2
+                'requires_new_backup_codes': len(two_factor.backup_codes) <= 2,
+                **build_token_response(user),
             })
 
         return Response({
@@ -345,11 +350,12 @@ def verify_2fa_login(request):
         }, status=status.HTTP_400_BAD_REQUEST)
 
     # Update last used
-    two_factor.last_used_at = datetime.now()
+    two_factor.last_used_at = timezone.now()
     two_factor.save()
 
+    # OTP valid → complete login by issuing tokens.
     return Response({
         'success': True,
         'message': 'Verification successful',
-        'user_id': str(user.id)
+        **build_token_response(user),
     })

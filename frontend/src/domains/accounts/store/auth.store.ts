@@ -14,11 +14,17 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
 
+  // 2FA login challenge — set when password is correct but an OTP is still required.
+  otpRequired: boolean;
+  otpUserId: string | null;
+
   // Actions
   setUser: (user: AuthUser | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<{ requiresOtp: boolean }>;
+  verifyOtp: (code: string) => Promise<void>;
+  cancelOtp: () => void;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   clearError: () => void;
@@ -32,6 +38,8 @@ export const useAuthStore = create<AuthState>()(
         isAuthenticated: false,
         isLoading: true,  // Start true — prevent redirect before persist hydration
         error: null,
+        otpRequired: false,
+        otpUserId: null,
 
         setUser: (user) => 
           set({ 
@@ -50,15 +58,31 @@ export const useAuthStore = create<AuthState>()(
           set({ error: null }),
 
         login: async (username, password) => {
-          set({ isLoading: true, error: null });
+          set({ isLoading: true, error: null, otpRequired: false, otpUserId: null });
           try {
-            const session = await authService.login({ username, password });
+            const result = await authService.login({ username, password });
+
+            // 2FA enabled → password OK, but tokens are withheld until OTP verified.
+            if ('requiresOtp' in result) {
+              set({
+                isAuthenticated: false,
+                isLoading: false,
+                error: null,
+                otpRequired: true,
+                otpUserId: result.userId,
+              });
+              return { requiresOtp: true };
+            }
+
             set({
-              user: session.user,
+              user: result.user,
               isAuthenticated: true,
               isLoading: false,
               error: null,
+              otpRequired: false,
+              otpUserId: null,
             });
+            return { requiresOtp: false };
           } catch (error: any) {
             set({
               user: null,
@@ -70,6 +94,32 @@ export const useAuthStore = create<AuthState>()(
           }
         },
 
+        verifyOtp: async (code) => {
+          const { otpUserId } = get();
+          if (!otpUserId) throw new Error('No pending OTP challenge');
+          set({ isLoading: true, error: null });
+          try {
+            const session = await authService.verifyLoginOtp(otpUserId, code);
+            set({
+              user: session.user,
+              isAuthenticated: true,
+              isLoading: false,
+              error: null,
+              otpRequired: false,
+              otpUserId: null,
+            });
+          } catch (error: any) {
+            set({
+              isLoading: false,
+              error: error.response?.data?.message || error.message || 'Invalid verification code',
+            });
+            throw error;
+          }
+        },
+
+        cancelOtp: () =>
+          set({ otpRequired: false, otpUserId: null, error: null, isLoading: false }),
+
         logout: async () => {
           set({ isLoading: true });
           try {
@@ -80,6 +130,8 @@ export const useAuthStore = create<AuthState>()(
               isAuthenticated: false,
               isLoading: false,
               error: null,
+              otpRequired: false,
+              otpUserId: null,
             });
           }
         },
