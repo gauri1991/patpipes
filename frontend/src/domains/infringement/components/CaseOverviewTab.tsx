@@ -21,6 +21,7 @@ import {
   formatDate,
 } from '@/domains/infringement/utils';
 import { StatusChangeDialog } from './StatusChangeDialog';
+import { assessOdpMatch, OdpMatchResult } from '@/domains/infringement/lib/odpMatch';
 
 interface CaseOverviewTabProps {
   caseData: InfringementCase;
@@ -31,6 +32,9 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [odpData, setOdpData] = useState<ODPApplicationSummary | null>(null);
   const [odpLoading, setOdpLoading] = useState(false);
+  // Mismatch guard: don't show enrichment for an unrelated patent that merely shares the number.
+  const [odpMatch, setOdpMatch] = useState<OdpMatchResult | null>(null);
+  const [showAnyway, setShowAnyway] = useState(false);
 
   // Load ODP data for live patent status
   useEffect(() => {
@@ -51,7 +55,9 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
           pagination: { offset: 0, limit: 1 },
         });
         if (response.success && response.data?.patentFileWrapperDataBag && response.data.patentFileWrapperDataBag.length > 0) {
-          setOdpData(response.data.patentFileWrapperDataBag[0]);
+          const summary = response.data.patentFileWrapperDataBag[0];
+          setOdpData(summary);
+          setOdpMatch(assessOdpMatch(caseData, summary));
         }
       } catch {
         // ODP data is optional enrichment, don't fail
@@ -60,8 +66,13 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
       }
     };
 
+    setOdpData(null);
+    setOdpMatch(null);
+    setShowAnyway(false);
     fetchOdpData();
-  }, [caseData.patent_number]);
+    // caseData identity is stable per load; key off the fields the lookup/guard depend on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseData.patent_number, caseData.patent_title]);
 
   return (
     <div className="space-y-6">
@@ -246,6 +257,24 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
           <CardContent>
             {odpLoading ? (
               <p className="text-sm text-muted-foreground">Loading USPTO data...</p>
+            ) : odpData && odpMatch && !odpMatch.confident && !showAnyway ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm">
+                <p className="font-medium text-amber-900">
+                  No confident USPTO match for {caseData.patent_number}
+                </p>
+                <p className="text-amber-800 mt-1">{odpMatch.reason}</p>
+                <p className="text-amber-700 mt-1 text-xs">
+                  This patent number may belong to a different patent than the one on this case.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setShowAnyway(true)}
+                >
+                  Show result anyway
+                </Button>
+              </div>
             ) : odpData ? (
               <div className="grid gap-4 md:grid-cols-3">
                 <div>

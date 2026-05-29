@@ -11,6 +11,7 @@ export interface PatentBrief {
   id: string;
   title: string;
   patent_number: string | null;
+  assignees?: string[];
   portfolio_id: string | null;
   portfolio_name: string | null;
 }

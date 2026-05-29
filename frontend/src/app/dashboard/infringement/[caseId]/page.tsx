@@ -7,10 +7,24 @@ import {
   ArrowLeft,
   Shield,
   RefreshCw,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { infringementApi } from '@/services/infringementApi';
+import { toast } from 'sonner';
 import { useInfringementCase } from '@/hooks/useInfringementData';
 import {
   getStatusColor,
@@ -26,6 +40,7 @@ import {
   PtabTab,
   ReportsTab,
   ImportClaimsDialog,
+  EditCaseDialog,
 } from '@/domains/infringement/components';
 
 export default function CaseDetailPage() {
@@ -36,6 +51,28 @@ export default function CaseDetailPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [importClaimsOpen, setImportClaimsOpen] = useState(false);
   const [claimsRefreshKey, setClaimsRefreshKey] = useState(0);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!caseData) return;
+    setDeleting(true);
+    try {
+      const res = await infringementApi.deleteCase(caseData.id);
+      if (res.success) {
+        toast.success('Case deleted');
+        router.push('/dashboard/infringement');
+      } else {
+        toast.error('Failed to delete case');
+        setDeleting(false);
+      }
+    } catch (e) {
+      console.error('Error deleting case:', e);
+      toast.error('Failed to delete case');
+      setDeleting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -117,6 +154,19 @@ export default function CaseDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-red-600 hover:text-red-700"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </Button>
             <Button variant="outline" size="sm" onClick={refresh}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
@@ -191,6 +241,37 @@ export default function CaseDetailPage() {
           setClaimsRefreshKey((k) => k + 1);
         }}
       />
+
+      {/* Edit Case Dialog */}
+      <EditCaseDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        caseItem={caseData}
+        onSaved={refresh}
+      />
+
+      {/* Delete confirmation */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this case?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes “{caseData.case_name}” and all its claim mappings,
+              evidence, screenshots, risk assessments, damages, and reports. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); handleDelete(); }}
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleting ? 'Deleting…' : 'Delete Case'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -178,6 +178,9 @@ class PatentBriefSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     title = serializers.CharField()
     patent_number = serializers.CharField(allow_null=True)
+    # Assignees (list of names) — lets the UI sanity-check that a live USPTO lookup
+    # actually matches this patent before showing/applying enrichment.
+    assignees = serializers.JSONField(read_only=True, required=False)
     portfolio_id = serializers.UUIDField(source='portfolio.id', allow_null=True)
     portfolio_name = serializers.CharField(source='portfolio.name', allow_null=True, default=None)
 
