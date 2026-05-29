@@ -39,10 +39,16 @@ export function CaseOverviewTab({ caseData, onRefresh }: CaseOverviewTabProps) {
     const fetchOdpData = async () => {
       setOdpLoading(true);
       try {
-        // Strip US prefix and any commas/spaces for search
-        const cleanNumber = caseData.patent_number.replace(/^US/i, '').replace(/[,\s]/g, '');
+        // Strip US prefix, commas/spaces, and the trailing kind code (e.g. B2),
+        // then query ODP with its `q` field syntax — a bare {patentNumber} body is
+        // rejected by USPTO with a 400.
+        const cleanNumber = caseData.patent_number
+          .replace(/^US/i, '')
+          .replace(/[,\s]/g, '')
+          .replace(/[A-Z]\d*$/i, '');
         const response = await usptoOdpApi.searchApplications({
-          patentNumber: cleanNumber,
+          q: `applicationMetaData.patentNumber:${cleanNumber}`,
+          pagination: { offset: 0, limit: 1 },
         });
         if (response.success && response.data?.patentFileWrapperDataBag && response.data.patentFileWrapperDataBag.length > 0) {
           setOdpData(response.data.patentFileWrapperDataBag[0]);
