@@ -41,6 +41,10 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [evidenceTitle, setEvidenceTitle] = useState('');
   const [mappings, setMappings] = useState<ClaimMapping[]>([]);
+  // Claim numbers this evidence was tagged with (Evidence.related_claims); the claims pane
+  // is scoped to these so the analyst only maps regions to the relevant claims.
+  const [relatedClaims, setRelatedClaims] = useState<string[]>([]);
+  const [showAllClaims, setShowAllClaims] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,6 +83,7 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
       }
       setFileUrl(evRes.data.file);
       setEvidenceTitle(evRes.data.title);
+      setRelatedClaims((evRes.data.related_claims || []).map((c: any) => String(c)));
       await loadMappings();
       // Load case-wide claim-term colors (auto-extract once if none yet).
       const caseRes = await infringementApi.getCase(caseId);
@@ -261,9 +266,18 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
   };
 
   const selectedCount = selectedElements.size;
+  // Scope the claims pane to this evidence's related claims (unless the analyst opts to
+  // show all, or the evidence has none tagged / none of them match the case's mappings).
+  const visibleMappings = useMemo(() => {
+    if (showAllClaims || relatedClaims.length === 0) return mappings;
+    const set = new Set(relatedClaims.map(String));
+    const filtered = mappings.filter((m) => set.has(String(m.claim_number)));
+    return filtered.length ? filtered : mappings;
+  }, [mappings, relatedClaims, showAllClaims]);
+  const isScoped = visibleMappings.length !== mappings.length;
   const totalElements = useMemo(
-    () => mappings.reduce((n, m) => n + (m.elements?.length || 0), 0),
-    [mappings]
+    () => visibleMappings.reduce((n, m) => n + (m.elements?.length || 0), 0),
+    [visibleMappings]
   );
 
   return (
@@ -364,6 +378,24 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
               )}
             </div>
 
+            {/* Related-claims scope notice + toggle */}
+            {relatedClaims.length > 0 && (
+              <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  {isScoped
+                    ? `Showing ${visibleMappings.length} claim${visibleMappings.length === 1 ? '' : 's'} related to this evidence`
+                    : 'Showing all claims'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowAllClaims((v) => !v)}
+                  className="text-cyan-600 hover:underline"
+                >
+                  {showAllClaims ? 'Show related only' : 'Show all claims'}
+                </button>
+              </div>
+            )}
+
             {/* Claims list — own scroll area so the terms box stays pinned above */}
             <div className="flex-1 min-h-0 overflow-y-auto space-y-4 mt-3">
             {totalElements === 0 && (
@@ -371,7 +403,7 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
                 No claim elements yet. Parse/import claims in the Claim Chart tab first.
               </p>
             )}
-            {mappings.map((m) => (
+            {visibleMappings.map((m) => (
               <div key={m.id}>
                 <div className="text-xs font-semibold text-muted-foreground mb-1">Claim {m.claim_number}</div>
                 <div className="space-y-1">
@@ -481,7 +513,7 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
               <p className="text-xs text-muted-foreground mb-2">No claim elements yet — add them in the Claim Chart tab.</p>
             ) : (
               <div className="max-h-40 overflow-y-auto border rounded-md p-1.5 mb-2 space-y-0.5">
-                {mappings.map((m) =>
+                {visibleMappings.map((m) =>
                   (m.elements || []).map((el) => {
                     const label = `${m.claim_number}.${el.element_order}`;
                     return (
