@@ -19,14 +19,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 
 import { useAnalyticsProjects } from '@/hooks/useAnalyticsData';
 import { analyticsApi, LitigationAnalysis } from '@/services/analyticsApi';
@@ -200,45 +194,30 @@ export default function LitigationAnalysisPage() {
               <CardTitle className="text-lg">Risk by Patent</CardTitle>
               <CardDescription>Patents sorted by litigation risk score</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Patent ID</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Assignee</TableHead>
-                      <TableHead>Risk Score</TableHead>
-                      <TableHead>Level</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {result.risk_by_patent.slice(0, 25).map((p, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-mono text-sm">{p.patent_id}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{p.title}</TableCell>
-                        <TableCell className="max-w-[150px] truncate">{p.assignee}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress value={p.litigation_risk_score} className="h-1.5 w-16" />
-                            <span className="text-sm font-mono">{p.litigation_risk_score}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getRiskBadge(p.risk_level)}>{p.risk_level}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {result.risk_by_patent.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
-                          No patent risk data available.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+            <CardContent className="p-0">
+              {(() => {
+                type RiskRow = typeof result.risk_by_patent[number];
+                const { column } = createColumns<RiskRow>();
+                return (
+                  <DataTable
+                    data={result.risk_by_patent}
+                    columns={[
+                      column({ accessorKey: 'patent_id', header: ({ column }) => <DataTableColumnHeader column={column} title="Patent ID" />, cell: ({ getValue }) => <span className="font-mono text-sm">{getValue() as string}</span> }),
+                      column({ accessorKey: 'title', header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />, cell: ({ getValue }) => <span className="max-w-[200px] truncate block">{getValue() as string}</span> }),
+                      column({ accessorKey: 'assignee', header: ({ column }) => <DataTableColumnHeader column={column} title="Assignee" />, cell: ({ getValue }) => <span className="max-w-[150px] truncate block">{getValue() as string}</span> }),
+                      column({ accessorKey: 'litigation_risk_score', header: ({ column }) => <DataTableColumnHeader column={column} title="Risk Score" />, cell: ({ getValue }) => { const v = getValue() as number; return <div className="flex items-center gap-2"><Progress value={v} className="h-1.5 w-16" /><span className="text-sm font-mono">{v}</span></div>; }, meta: { filterType: 'number-range' as const } }),
+                      column({ accessorKey: 'risk_level', header: 'Level', cell: ({ getValue }) => { const v = getValue() as string; return <Badge variant={getRiskBadge(v)}>{v}</Badge>; }, meta: { filterType: 'select' as const, filterOptions: [{ label: 'High', value: 'high' }, { label: 'Medium', value: 'medium' }, { label: 'Low', value: 'low' }, { label: 'None', value: 'none' }] } }),
+                    ]}
+                    getRowId={(_, i) => String(i)}
+                    features={{ enableSorting: true, enableFiltering: true, enableColumnVisibility: true, enableExport: true, enableDensityToggle: true }}
+                    initialSorting={[{ id: 'litigation_risk_score', desc: true }]}
+                    exportConfig={{ filename: 'litigation-risk' }}
+                    initialPageSize={25}
+                    emptyState="No patent risk data available."
+                    className="rounded-none border-0 border-t"
+                  />
+                );
+              })()}
             </CardContent>
           </Card>
 

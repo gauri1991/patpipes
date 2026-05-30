@@ -34,15 +34,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 
@@ -62,7 +56,6 @@ export function DatasetDetailView({ dataset, isOpen, onClose, onProcessingStart 
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
-  const [searchTerm, setSearchTerm] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<PatentRecord | null>(null);
   const [showRecordDetail, setShowRecordDetail] = useState(false);
 
@@ -139,12 +132,132 @@ export function DatasetDetailView({ dataset, isOpen, onClose, onProcessingStart 
     }
   };
 
-  const filteredRecords = records.filter(record =>
-    searchTerm === '' || 
-    record.patent_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    record.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    record.assignee?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const { column } = createColumns<PatentRecord>();
+  const columns = [
+    column({
+      id: 'patent_identifier',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Patent ID" />,
+      // Search across both patent_id and publication_number
+      accessorFn: row => [row.patent_id, row.publication_number].filter(Boolean).join(' '),
+      cell: ({ row }) => {
+        const r = row.original;
+        const primary = r.patent_id || r.publication_number || '—';
+        const secondary = r.patent_id && r.publication_number ? r.publication_number : null;
+        return (
+          <button
+            className="text-left hover:bg-muted/50 rounded p-1 -m-1 transition-colors w-full"
+            onClick={e => { e.stopPropagation(); setSelectedRecord(r); setShowRecordDetail(true); }}
+          >
+            <div className="font-medium text-blue-600 hover:text-blue-800">{primary}</div>
+            {secondary && <div className="text-xs text-muted-foreground">{secondary}</div>}
+          </button>
+        );
+      },
+      enableHiding: false,
+    }),
+    column({
+      accessorKey: 'title',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />,
+      cell: ({ getValue }) => (
+        <div className="max-w-[250px] truncate" title={getValue() as string}>{(getValue() as string) || 'N/A'}</div>
+      ),
+    }),
+    column({
+      id: 'assignee',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Assignee" />,
+      accessorFn: row => row.parent_assignee || row.assignee || '',
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return v ? <div className="max-w-[180px] truncate" title={v}>{v}</div> : <span className="text-muted-foreground">N/A</span>;
+      },
+    }),
+    column({
+      accessorKey: 'inventor',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Inventor" />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return v ? <div className="max-w-[150px] truncate" title={v}>{v}</div> : <span className="text-muted-foreground">N/A</span>;
+      },
+    }),
+    column({
+      accessorKey: 'filing_date',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Application Date" />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return <span>{v ? new Date(v).toLocaleDateString() : 'N/A'}</span>;
+      },
+      meta: { filterType: 'date-range' as const },
+    }),
+    column({
+      accessorKey: 'publication_date',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Publication Date" />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return <span>{v ? new Date(v).toLocaleDateString() : 'N/A'}</span>;
+      },
+      meta: { filterType: 'date-range' as const },
+    }),
+    column({
+      accessorKey: 'priority_date',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Priority Date" />,
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return <span>{v ? new Date(v).toLocaleDateString() : 'N/A'}</span>;
+      },
+      meta: { filterType: 'date-range' as const },
+    }),
+    column({
+      accessorKey: 'country_code',
+      header: 'Country',
+      cell: ({ getValue }) => <Badge variant="outline">{(getValue() as string) || 'N/A'}</Badge>,
+      meta: { filterType: 'text' as const },
+    }),
+    column({
+      accessorKey: 'patent_type',
+      header: 'Type',
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return v ? <div className="max-w-[100px] truncate" title={v}>{v}</div> : <span className="text-muted-foreground">N/A</span>;
+      },
+    }),
+    column({
+      accessorKey: 'ipc_classification',
+      header: 'IPC',
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return v ? <div className="max-w-[150px] truncate font-mono text-xs" title={v}>{v}</div> : <span className="text-muted-foreground">N/A</span>;
+      },
+    }),
+    column({
+      accessorKey: 'cpc_classification',
+      header: 'CPC',
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return v ? <div className="max-w-[150px] truncate font-mono text-xs" title={v}>{v}</div> : <span className="text-muted-foreground">N/A</span>;
+      },
+    }),
+    column({
+      accessorKey: 'claims_count',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Claims" />,
+      cell: ({ getValue }) => {
+        const v = getValue();
+        const n = v != null && v !== '' ? Number(v) : null;
+        return <span className="text-center block">{n != null ? n.toLocaleString() : 'N/A'}</span>;
+      },
+      meta: { filterType: 'number-range' as const },
+    }),
+    column({
+      accessorKey: 'claims',
+      header: 'Claims Preview',
+      cell: ({ getValue }) => {
+        const v = getValue() as string;
+        return v
+          ? <div className="max-w-[200px] truncate text-xs" title={v}>{v.length > 100 ? `${v.substring(0, 100)}…` : v}</div>
+          : <span className="text-muted-foreground text-xs">No claims</span>;
+      },
+      enableSorting: false,
+    }),
+  ];
 
   useEffect(() => {
     if (isOpen && isProcessed) {
@@ -258,225 +371,66 @@ export function DatasetDetailView({ dataset, isOpen, onClose, onProcessingStart 
             ) : (
               // Processed - Show Records Table
               <Card>
-                <CardHeader>
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <FileText className="w-5 h-5" />
-                        Patent Records ({totalCount.toLocaleString()})
-                      </CardTitle>
-                      <CardDescription>
-                        Parsed and extracted patent data from uploaded file
-                      </CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Search records..."
-                          className="pl-8 w-64"
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                      </div>
-                      <Button variant="outline" size="icon">
-                        <Download className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="w-5 h-5" />
+                    Patent Records ({totalCount.toLocaleString()})
+                  </CardTitle>
+                  <CardDescription>Parsed and extracted patent data from uploaded file</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  {loading ? (
-                    <div className="text-center py-8">
-                      <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-                      <p className="text-muted-foreground">Loading records...</p>
-                    </div>
-                  ) : filteredRecords.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      {searchTerm ? 'No records match your search.' : 'No records found.'}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="w-[50px]">#</TableHead>
-                              <TableHead className="min-w-[120px]">Publication Number</TableHead>
-                              <TableHead className="min-w-[250px]">Title</TableHead>
-                              <TableHead className="min-w-[180px]">Assignee</TableHead>
-                              <TableHead className="min-w-[150px]">Inventor</TableHead>
-                              <TableHead className="min-w-[120px]">Application Date</TableHead>
-                              <TableHead className="min-w-[120px]">Publication Date</TableHead>
-                              <TableHead className="min-w-[120px]">Priority Date</TableHead>
-                              <TableHead className="min-w-[100px]">Country</TableHead>
-                              <TableHead className="min-w-[100px]">Patent Type</TableHead>
-                              <TableHead className="min-w-[150px]">IPC Classification</TableHead>
-                              <TableHead className="min-w-[150px]">CPC Classification</TableHead>
-                              <TableHead className="min-w-[100px]">Claims Count</TableHead>
-                              <TableHead className="min-w-[200px]">Claims Preview</TableHead>
-                              <TableHead className="text-center w-[80px]">Details</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {filteredRecords.map((record, index) => (
-                              <TableRow key={record.id}>
-                                <TableCell className="font-medium">
-                                  {(currentPage - 1) * pageSize + index + 1}
-                                </TableCell>
-                                <TableCell>
-                                  {record.publication_number ? (
-                                    <button
-                                      className="text-left hover:bg-muted/50 rounded p-1 -m-1 transition-colors"
-                                      onClick={() => {
-                                        setSelectedRecord(record);
-                                        setShowRecordDetail(true);
-                                      }}
-                                    >
-                                      <div className="font-medium text-blue-600 hover:text-blue-800 cursor-pointer">
-                                        {record.publication_number}
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">Row {record.row_number}</div>
-                                    </button>
-                                  ) : (
-                                    <div className="text-muted-foreground">N/A</div>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="max-w-[250px] truncate" title={record.title}>
-                                    {record.title || 'N/A'}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  {record.parent_assignee || record.assignee ? (
-                                    <div className="max-w-[180px] truncate" title={record.parent_assignee || record.assignee}>
-                                      {record.parent_assignee || record.assignee}
-                                    </div>
-                                  ) : (
-                                    <div className="text-muted-foreground">N/A</div>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="max-w-[150px] truncate" title={record.inventor}>
-                                    {record.inventor || 'N/A'}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  {record.filing_date ? 
-                                    new Date(record.filing_date).toLocaleDateString() : 'N/A'}
-                                </TableCell>
-                                <TableCell>
-                                  {record.publication_date ? 
-                                    new Date(record.publication_date).toLocaleDateString() : 'N/A'}
-                                </TableCell>
-                                <TableCell>
-                                  {record.priority_date ? 
-                                    new Date(record.priority_date).toLocaleDateString() : 'N/A'}
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant="outline">{record.country_code || 'N/A'}</Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="max-w-[100px] truncate" title={record.patent_type}>
-                                    {record.patent_type || 'N/A'}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="max-w-[150px] truncate font-mono text-xs" title={record.ipc_classification}>
-                                    {record.ipc_classification || 'N/A'}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="max-w-[150px] truncate font-mono text-xs" title={record.cpc_classification}>
-                                    {record.cpc_classification || 'N/A'}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="text-center">
-                                  {record.claims_count?.toLocaleString() || 'N/A'}
-                                </TableCell>
-                                <TableCell>
-                                  {record.claims ? (
-                                    <div className="max-w-[200px] truncate text-xs" title={record.claims}>
-                                      {record.claims.length > 100 ? 
-                                        `${record.claims.substring(0, 100)}...` : 
-                                        record.claims}
-                                    </div>
-                                  ) : (
-                                    <div className="text-muted-foreground text-xs">No claims</div>
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-center">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => {
-                                      setSelectedRecord(record);
-                                      setShowRecordDetail(true);
-                                    }}
-                                  >
-                                    <Eye className="w-4 h-4" />
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-
-                      {/* Pagination */}
-                      {totalPages > 1 && (
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm text-muted-foreground">
-                            Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of {totalCount} records
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={currentPage === 1}
-                              onClick={() => fetchRecords(currentPage - 1)}
-                            >
-                              <ArrowLeft className="w-4 h-4 mr-1" />
-                              Previous
-                            </Button>
-                            <div className="text-sm">
-                              Page {currentPage} of {totalPages}
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={currentPage === totalPages}
-                              onClick={() => fetchRecords(currentPage + 1)}
-                            >
-                              Next
-                              <ArrowRight className="w-4 h-4 ml-1" />
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                <CardContent className="p-0">
+                  <DataTable
+                    data={records}
+                    columns={columns}
+                    getRowId={row => row.id}
+                    isLoading={loading}
+                    features={{
+                      enableSorting: true,
+                      enableFiltering: true,
+                      enableColumnVisibility: true,
+                      enableDensityToggle: true,
+                      enableExport: true,
+                    }}
+                    initialVisibility={{
+                      priority_date: false,
+                      patent_type: false,
+                      ipc_classification: false,
+                      cpc_classification: false,
+                      claims: false,
+                    }}
+                    serverSide={{
+                      manualPagination: true,
+                      rowCount: totalCount,
+                      onPaginationChange: ({ pageIndex }) => fetchRecords(pageIndex + 1),
+                    }}
+                    pagination={{ pageIndex: currentPage - 1, pageSize }}
+                    onRowClick={row => { setSelectedRecord(row.original); setShowRecordDetail(true); }}
+                    exportConfig={{ filename: `dataset-${dataset.name}` }}
+                    initialPageSize={pageSize}
+                    emptyState="No records found."
+                    className="rounded-none border-0 border-t"
+                  />
                 </CardContent>
               </Card>
             )}
           </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* Record Detail Modal */}
-      <Dialog open={showRecordDetail} onOpenChange={setShowRecordDetail}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          {selectedRecord && (
-            <>
-              <DialogHeader>
-                <DialogTitle>Patent Record Details</DialogTitle>
-                <DialogDescription>
-                  Row {selectedRecord.row_number} from {dataset.name}
-                </DialogDescription>
-              </DialogHeader>
-              <RecordDetailView record={selectedRecord} />
-            </>
-          )}
+          {/* Record Detail Modal — nested inside outer dialog so Radix handles focus trapping correctly */}
+          <Dialog open={showRecordDetail} onOpenChange={setShowRecordDetail}>
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              {selectedRecord && (
+                <>
+                  <DialogHeader>
+                    <DialogTitle>Patent Record Details</DialogTitle>
+                    <DialogDescription>
+                      {dataset.name}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <RecordDetailView record={selectedRecord} />
+                </>
+              )}
+            </DialogContent>
+          </Dialog>
         </DialogContent>
       </Dialog>
     </>

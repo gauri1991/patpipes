@@ -20,26 +20,13 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 import { Progress } from '@/components/ui/progress';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 
 import { useAnalyticsProjects } from '@/hooks/useAnalyticsData';
 import { analyticsApi, FtoAnalysis, PatentAssessment } from '@/services/analyticsApi';
 
-type SortField = 'risk_score' | 'title' | 'assignee' | 'filing_date';
-type SortDir = 'asc' | 'desc';
 
 export default function FtoAnalysisPage() {
   const { projects, loading: projectsLoading } = useAnalyticsProjects();
@@ -48,9 +35,6 @@ export default function FtoAnalysisPage() {
   const [analysisResult, setAnalysisResult] = useState<FtoAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedPatents, setExpandedPatents] = useState<Set<string>>(new Set());
-  const [sortField, setSortField] = useState<SortField>('risk_score');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const runAnalysis = useCallback(async () => {
     if (!selectedProject) return;
@@ -70,17 +54,7 @@ export default function FtoAnalysisPage() {
     }
   }, [selectedProject, targetDescription]);
 
-  const togglePatent = (patentId: string) => {
-    setExpandedPatents(prev => {
-      const next = new Set(prev);
-      if (next.has(patentId)) {
-        next.delete(patentId);
-      } else {
-        next.add(patentId);
-      }
-      return next;
-    });
-  };
+
 
   const getRiskColor = (level: string) => {
     switch (level) {
@@ -109,27 +83,53 @@ export default function FtoAnalysisPage() {
     }
   };
 
-  const sortedAssessments = analysisResult?.patent_assessments
-    ? [...analysisResult.patent_assessments].sort((a, b) => {
-        const dir = sortDir === 'asc' ? 1 : -1;
-        switch (sortField) {
-          case 'risk_score': return (a.risk_score - b.risk_score) * dir;
-          case 'title': return a.title.localeCompare(b.title) * dir;
-          case 'assignee': return (a.assignee || '').localeCompare(b.assignee || '') * dir;
-          case 'filing_date': return ((a.filing_date || '') > (b.filing_date || '') ? 1 : -1) * dir;
-          default: return 0;
-        }
-      })
-    : [];
-
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('desc');
-    }
-  };
+  const { column } = createColumns<PatentAssessment>();
+  const assessmentColumns = [
+    column({
+      accessorKey: 'risk_score',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Risk" />,
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${getRiskColor(row.original.risk_level)}`} />
+          <span className="font-mono text-sm">{row.original.risk_score}</span>
+        </div>
+      ),
+    }),
+    column({
+      accessorKey: 'patent_id',
+      header: 'Patent ID',
+      cell: ({ getValue }) => <span className="font-mono text-sm">{getValue() as string}</span>,
+    }),
+    column({
+      accessorKey: 'title',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />,
+      cell: ({ getValue }) => <span className="max-w-[200px] truncate block">{getValue() as string}</span>,
+    }),
+    column({
+      accessorKey: 'assignee',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Assignee" />,
+      cell: ({ getValue }) => <span className="max-w-[150px] truncate block">{getValue() as string}</span>,
+    }),
+    column({
+      id: 'claims',
+      header: 'Claims',
+      accessorFn: row => `${row.independent_claims_count}i / ${row.dependent_claims_count}d`,
+      cell: ({ getValue }) => <span className="text-xs">{getValue() as string}</span>,
+      enableSorting: false,
+    }),
+    column({
+      accessorKey: 'legal_status',
+      header: 'Status',
+      cell: ({ getValue }) => (
+        <Badge variant="outline" className="text-xs">{(getValue() as string) || 'Unknown'}</Badge>
+      ),
+    }),
+    column({
+      accessorKey: 'filing_date',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Filed" />,
+      cell: ({ getValue }) => <span className="text-sm">{(getValue() as string) || '—'}</span>,
+    }),
+  ];
 
   return (
     <div className="space-y-6">
@@ -327,128 +327,55 @@ export default function FtoAnalysisPage() {
                 Click on a row to expand claim coverage analysis
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-8" />
-                      <TableHead
-                        className="cursor-pointer hover:text-foreground"
-                        onClick={() => handleSort('risk_score')}
-                      >
-                        Risk {sortField === 'risk_score' && (sortDir === 'asc' ? '↑' : '↓')}
-                      </TableHead>
-                      <TableHead>Patent ID</TableHead>
-                      <TableHead
-                        className="cursor-pointer hover:text-foreground"
-                        onClick={() => handleSort('title')}
-                      >
-                        Title {sortField === 'title' && (sortDir === 'asc' ? '↑' : '↓')}
-                      </TableHead>
-                      <TableHead
-                        className="cursor-pointer hover:text-foreground"
-                        onClick={() => handleSort('assignee')}
-                      >
-                        Assignee {sortField === 'assignee' && (sortDir === 'asc' ? '↑' : '↓')}
-                      </TableHead>
-                      <TableHead>Claims</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead
-                        className="cursor-pointer hover:text-foreground"
-                        onClick={() => handleSort('filing_date')}
-                      >
-                        Filed {sortField === 'filing_date' && (sortDir === 'asc' ? '↑' : '↓')}
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedAssessments.map((patent: PatentAssessment) => (
-                      <Collapsible
-                        key={patent.patent_id}
-                        open={expandedPatents.has(patent.patent_id)}
-                        onOpenChange={() => togglePatent(patent.patent_id)}
-                        asChild
-                      >
-                        <>
-                          <CollapsibleTrigger asChild>
-                            <TableRow className="cursor-pointer hover:bg-muted/50">
-                              <TableCell>
-                                {expandedPatents.has(patent.patent_id) ? (
-                                  <ChevronDown className="h-4 w-4" />
-                                ) : (
-                                  <ChevronRight className="h-4 w-4" />
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <div className={`w-2 h-2 rounded-full ${getRiskColor(patent.risk_level)}`} />
-                                  <span className="font-mono text-sm">{patent.risk_score}</span>
+            <CardContent className="p-0">
+              <DataTable
+                data={analysisResult.patent_assessments}
+                columns={assessmentColumns}
+                getRowId={row => row.patent_id}
+                features={{
+                  enableSorting: true,
+                  enableMultiSort: true,
+                  enableFiltering: true,
+                  enableColumnVisibility: true,
+                  enableDensityToggle: true,
+                  enableExport: true,
+                  enableRowExpansion: true,
+                }}
+                initialSorting={[{ id: 'risk_score', desc: true }]}
+                renderSubRow={row => {
+                  const patent = row.original;
+                  return (
+                    <div className="py-3 px-6 space-y-3 bg-muted/30 border-t">
+                      <div className="text-sm font-medium">Claim Coverage Analysis</div>
+                      {patent.claim_analysis.length > 0 ? (
+                        <div className="space-y-2">
+                          {patent.claim_analysis.map((claim, idx) => (
+                            <div key={idx} className="flex items-start gap-3 p-2 rounded bg-background border">
+                              <Badge variant={getRiskBadgeVariant(claim.risk_level)} className="shrink-0 mt-0.5">
+                                Claim {claim.claim_number}
+                              </Badge>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs text-muted-foreground line-clamp-2">{claim.text}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-xs">Coverage:</span>
+                                  <Progress value={claim.coverage_score} className="h-1.5 w-24" />
+                                  <span className="text-xs font-mono">{claim.coverage_score}%</span>
                                 </div>
-                              </TableCell>
-                              <TableCell className="font-mono text-sm">{patent.patent_id}</TableCell>
-                              <TableCell className="max-w-[200px] truncate">{patent.title}</TableCell>
-                              <TableCell className="max-w-[150px] truncate">{patent.assignee}</TableCell>
-                              <TableCell>
-                                <span className="text-xs">
-                                  {patent.independent_claims_count}i / {patent.dependent_claims_count}d
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant="outline" className="text-xs">
-                                  {patent.legal_status || 'Unknown'}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {patent.filing_date || '-'}
-                              </TableCell>
-                            </TableRow>
-                          </CollapsibleTrigger>
-                          <CollapsibleContent asChild>
-                            <TableRow className="bg-muted/30">
-                              <TableCell colSpan={8}>
-                                <div className="py-3 space-y-3">
-                                  <div className="text-sm font-medium">Claim Coverage Analysis</div>
-                                  {patent.claim_analysis.length > 0 ? (
-                                    <div className="space-y-2">
-                                      {patent.claim_analysis.map((claim, idx) => (
-                                        <div key={idx} className="flex items-start gap-3 p-2 rounded bg-background border">
-                                          <Badge variant={getRiskBadgeVariant(claim.risk_level)} className="shrink-0 mt-0.5">
-                                            Claim {claim.claim_number}
-                                          </Badge>
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-xs text-muted-foreground line-clamp-2">{claim.text}</p>
-                                            <div className="flex items-center gap-2 mt-1">
-                                              <span className="text-xs">Coverage:</span>
-                                              <Progress value={claim.coverage_score} className="h-1.5 w-24" />
-                                              <span className="text-xs font-mono">{claim.coverage_score}%</span>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-sm text-muted-foreground">
-                                      No independent claims data available for detailed analysis.
-                                    </p>
-                                  )}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          </CollapsibleContent>
-                        </>
-                      </Collapsible>
-                    ))}
-                    {sortedAssessments.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                          No patent assessments found.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No independent claims data available for detailed analysis.</p>
+                      )}
+                    </div>
+                  );
+                }}
+                exportConfig={{ filename: 'fto-patent-assessments' }}
+                initialPageSize={20}
+                emptyState="No patent assessments found."
+                className="rounded-none border-0 border-t"
+              />
             </CardContent>
           </Card>
 

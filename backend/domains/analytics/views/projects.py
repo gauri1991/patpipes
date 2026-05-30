@@ -1270,7 +1270,27 @@ class AnalyticsProjectViewSet(viewsets.ModelViewSet):
                     ignore_conflicts=True,
                 )
 
-            qs = PatentBundleAttributes.objects.filter(patent_record_id__in=record_ids).select_related('patent_record')
+            # Optional legal_status filter (e.g. ?legal_status=granted)
+            from django.db.models import Q
+            legal_status_filter = request.query_params.get('legal_status', '').strip().lower()
+            if legal_status_filter == 'granted':
+                # A patent counts as granted if legal_status says so OR it has a grant_date
+                filtered_record_ids = list(
+                    PatentRecord.objects.filter(id__in=record_ids).filter(
+                        Q(legal_status__iexact='granted') | Q(grant_date__isnull=False)
+                    ).values_list('id', flat=True)
+                )
+            elif legal_status_filter:
+                filtered_record_ids = list(
+                    PatentRecord.objects.filter(
+                        id__in=record_ids,
+                        legal_status__iexact=legal_status_filter,
+                    ).values_list('id', flat=True)
+                )
+            else:
+                filtered_record_ids = record_ids
+
+            qs = PatentBundleAttributes.objects.filter(patent_record_id__in=filtered_record_ids).select_related('patent_record')
             total = qs.count()
 
             # Live completeness over ALL rows (not just this page) so the UI's Group A /

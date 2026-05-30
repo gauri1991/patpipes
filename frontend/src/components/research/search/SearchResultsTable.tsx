@@ -1,10 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 
 interface PatentResult {
   id: string;
@@ -22,99 +21,101 @@ interface SearchResultsTableProps {
   totalResults?: number;
   currentPage?: number;
   totalPages?: number;
+  onPageChange?: (page: number) => void;
 }
 
-export function SearchResultsTable({ 
+const { column } = createColumns<PatentResult>();
+
+const COLUMNS = [
+  column({
+    accessorKey: 'patent_number',
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Patent Number" />,
+    cell: ({ getValue }) => <span className="font-mono text-sm">{getValue() as string}</span>,
+  }),
+  column({
+    accessorKey: 'title',
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />,
+    cell: ({ getValue }) => (
+      <span className="max-w-xs truncate block" title={getValue() as string}>{getValue() as string}</span>
+    ),
+  }),
+  column({
+    accessorKey: 'assignee',
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Assignee" />,
+    cell: ({ getValue }) => <span className="text-sm">{getValue() as string}</span>,
+  }),
+  column({
+    accessorKey: 'publication_date',
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Date" />,
+    cell: ({ getValue }) => (
+      <span className="text-sm">{new Date(getValue() as string).toLocaleDateString()}</span>
+    ),
+    meta: { filterType: 'date-range' as const },
+  }),
+  column({
+    accessorKey: 'status',
+    header: 'Status',
+    cell: ({ getValue }) => {
+      const s = getValue() as string;
+      return <Badge variant={s === 'active' ? 'default' : 'secondary'}>{s}</Badge>;
+    },
+    meta: {
+      filterType: 'select' as const,
+      filterOptions: [
+        { label: 'Active', value: 'active' },
+        { label: 'Expired', value: 'expired' },
+        { label: 'Pending', value: 'pending' },
+      ],
+    },
+  }),
+  column({
+    accessorKey: 'jurisdiction',
+    header: 'Jurisdiction',
+    cell: ({ getValue }) => <span className="text-sm">{getValue() as string}</span>,
+  }),
+  column({
+    accessorKey: 'citation_count',
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Citations" />,
+    cell: ({ getValue }) => <span className="text-sm">{getValue() as number}</span>,
+    meta: { filterType: 'number-range' as const },
+  }),
+];
+
+export function SearchResultsTable({
   results = [],
   totalResults = 0,
   currentPage = 1,
-  totalPages = 1
+  totalPages = 1,
+  onPageChange,
 }: SearchResultsTableProps) {
-  const [sortField, setSortField] = useState<string>('relevance');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Search Results Table</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="rounded-md border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left p-2">
-                  <Button variant="ghost" size="sm" className="h-auto p-0 font-medium">
-                    Patent Number <ArrowUpDown className="ml-1 h-3 w-3" />
-                  </Button>
-                </th>
-                <th className="text-left p-2">Title</th>
-                <th className="text-left p-2">
-                  <Button variant="ghost" size="sm" className="h-auto p-0 font-medium">
-                    Assignee <ArrowUpDown className="ml-1 h-3 w-3" />
-                  </Button>
-                </th>
-                <th className="text-left p-2">
-                  <Button variant="ghost" size="sm" className="h-auto p-0 font-medium">
-                    Date <ArrowUpDown className="ml-1 h-3 w-3" />
-                  </Button>
-                </th>
-                <th className="text-left p-2">Status</th>
-                <th className="text-left p-2">
-                  <Button variant="ghost" size="sm" className="h-auto p-0 font-medium">
-                    Citations <ArrowUpDown className="ml-1 h-3 w-3" />
-                  </Button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center p-8 text-muted-foreground">
-                    No results to display
-                  </td>
-                </tr>
-              ) : (
-                results.map((patent) => (
-                  <tr key={patent.id} className="border-b hover:bg-muted/25">
-                    <td className="p-2 font-mono">{patent.patent_number}</td>
-                    <td className="p-2 max-w-xs truncate" title={patent.title}>
-                      {patent.title}
-                    </td>
-                    <td className="p-2">{patent.assignee}</td>
-                    <td className="p-2">{new Date(patent.publication_date).toLocaleDateString()}</td>
-                    <td className="p-2">
-                      <Badge variant={patent.status === 'active' ? 'default' : 'secondary'}>
-                        {patent.status}
-                      </Badge>
-                    </td>
-                    <td className="p-2">{patent.citation_count}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        
-        {/* Pagination Controls */}
-        <div className="flex items-center justify-between mt-4">
-          <div className="text-sm text-muted-foreground">
-            Showing {results.length} of {totalResults} results
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" disabled={currentPage === 1}>
-              <ChevronLeft className="h-3 w-3 mr-1" />
-              Previous
-            </Button>
-            <div className="flex items-center gap-1">
-              <span className="text-sm">Page {currentPage} of {totalPages}</span>
-            </div>
-            <Button variant="outline" size="sm" disabled={currentPage === totalPages}>
-              Next
-              <ChevronRight className="h-3 w-3 ml-1" />
-            </Button>
-          </div>
-        </div>
+      <CardContent className="p-0">
+        <DataTable
+          data={results}
+          columns={COLUMNS}
+          getRowId={row => row.id}
+          features={{
+            enableSorting: true,
+            enableMultiSort: true,
+            enableFiltering: true,
+            enableColumnVisibility: true,
+            enableDensityToggle: true,
+            enableExport: true,
+          }}
+          serverSide={onPageChange ? {
+            manualPagination: true,
+            rowCount: totalResults,
+            onPaginationChange: ({ pageIndex }) => onPageChange(pageIndex + 1),
+          } : undefined}
+          pagination={onPageChange ? { pageIndex: currentPage - 1, pageSize: Math.ceil(totalResults / totalPages) || 20 } : undefined}
+          exportConfig={{ filename: 'search-results' }}
+          emptyState="No results to display"
+          className="rounded-none border-0 border-t"
+        />
       </CardContent>
     </Card>
   );

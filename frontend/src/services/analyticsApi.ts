@@ -1453,10 +1453,13 @@ class AnalyticsApiService extends ApiClient {
   async getBundleAttributes(
     projectId: string,
     limit = 50,
-    offset = 0
+    offset = 0,
+    legalStatus?: string,
   ): Promise<ApiResponse<{ count: number; results: BundleAttributes[]; attribute_completeness?: AttributeCompleteness }>> {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (legalStatus) params.set('legal_status', legalStatus);
     return this.fetchWithAuth<{ count: number; results: BundleAttributes[]; attribute_completeness?: AttributeCompleteness }>(
-      `/analytics/api/projects/${projectId}/bundle_attributes/?limit=${limit}&offset=${offset}`
+      `/analytics/api/projects/${projectId}/bundle_attributes/?${params}`
     );
   }
 
@@ -1621,6 +1624,7 @@ export interface BundleAttributes {
   patent_id: string;
   title: string;
   enriched?: boolean;
+  record_legal_status?: string;
   // Group A
   a1_primary_domain: string;
   a2_tech_subcategory: string;

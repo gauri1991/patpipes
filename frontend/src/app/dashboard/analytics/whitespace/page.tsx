@@ -26,6 +26,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 
 import { useAnalyticsProjects } from '@/hooks/useAnalyticsData';
 import { analyticsApi, WhiteSpaceAnalysis } from '@/services/analyticsApi';
@@ -276,52 +278,28 @@ export default function WhiteSpaceAnalysisPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Technology Area</TableHead>
-                      <TableHead>Domain</TableHead>
-                      <TableHead className="text-center">Patents</TableHead>
-                      <TableHead>Score</TableHead>
-                      <TableHead>Recommendation</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {analysisResult.opportunities.map((opp, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-medium">{opp.technology_area}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{opp.application_domain}</Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Badge
-                            variant={opp.patent_count === 0 ? 'destructive' : 'secondary'}
-                          >
-                            {opp.patent_count}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress value={opp.opportunity_score} className="h-2 w-16" />
-                            <span className="text-sm font-mono">{opp.opportunity_score}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[300px]">
-                          {opp.recommendation}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {analysisResult.opportunities.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                          No opportunities identified. The patent landscape appears well covered.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+              {(() => {
+                type OppRow = typeof analysisResult.opportunities[number];
+                const { column } = createColumns<OppRow>();
+                return (
+                  <DataTable
+                    data={analysisResult.opportunities}
+                    columns={[
+                      column({ accessorKey: 'technology_area', header: ({ column }) => <DataTableColumnHeader column={column} title="Technology Area" />, cell: ({ getValue }) => <span className="font-medium">{getValue() as string}</span> }),
+                      column({ accessorKey: 'application_domain', header: 'Domain', cell: ({ getValue }) => <Badge variant="outline">{getValue() as string}</Badge> }),
+                      column({ accessorKey: 'patent_count', header: ({ column }) => <DataTableColumnHeader column={column} title="Patents" />, cell: ({ getValue }) => { const v = getValue() as number; return <Badge variant={v === 0 ? 'destructive' : 'secondary'}>{v}</Badge>; }, meta: { filterType: 'number-range' as const } }),
+                      column({ accessorKey: 'opportunity_score', header: ({ column }) => <DataTableColumnHeader column={column} title="Score" />, cell: ({ getValue }) => { const v = getValue() as number; return <div className="flex items-center gap-2"><Progress value={v} className="h-2 w-16" /><span className="text-sm font-mono">{v}</span></div>; }, meta: { filterType: 'number-range' as const } }),
+                      column({ accessorKey: 'recommendation', header: 'Recommendation', cell: ({ getValue }) => <span className="text-sm text-muted-foreground max-w-[300px] block">{getValue() as string}</span>, enableSorting: false }),
+                    ]}
+                    getRowId={(_, i) => String(i)}
+                    features={{ enableSorting: true, enableFiltering: true, enableColumnVisibility: true, enableExport: true, enableDensityToggle: true }}
+                    initialSorting={[{ id: 'opportunity_score', desc: true }]}
+                    exportConfig={{ filename: 'whitespace-opportunities' }}
+                    emptyState="No opportunities identified. The patent landscape appears well covered."
+                    className="rounded-none border-0 border-t"
+                  />
+                );
+              })()}
             </CardContent>
           </Card>
         </div>

@@ -486,12 +486,13 @@ class PatentBundleAttributesSerializer(serializers.ModelSerializer):
     patent_id = serializers.SerializerMethodField()
     title = serializers.SerializerMethodField()
     enriched = serializers.SerializerMethodField()
+    record_legal_status = serializers.SerializerMethodField()
 
     class Meta:
         from .models import PatentBundleAttributes
         model = PatentBundleAttributes
         fields = [
-            'id', 'patent_record_id', 'patent_id', 'title', 'enriched',
+            'id', 'patent_record_id', 'patent_id', 'title', 'enriched', 'record_legal_status',
             # Group A (4-level hierarchy: A1→A2→A2.1→A2.2, then A3/A4/A5)
             'a1_primary_domain', 'a2_tech_subcategory',
             'a21_tech_detail', 'a22_tech_niche',
@@ -537,6 +538,15 @@ class PatentBundleAttributesSerializer(serializers.ModelSerializer):
             return bool(raw.get('_odp_enriched'))
         except Exception:
             return False
+
+    def get_record_legal_status(self, obj):
+        try:
+            status = (obj.patent_record.legal_status or '').lower()
+            if not status and obj.patent_record.grant_date:
+                return 'granted'
+            return status
+        except Exception:
+            return ''
 
 
 class BundlingConfigurationSerializer(serializers.ModelSerializer):

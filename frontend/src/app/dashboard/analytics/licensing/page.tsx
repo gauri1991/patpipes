@@ -28,6 +28,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 
 import { useAnalyticsProjects } from '@/hooks/useAnalyticsData';
 import { analyticsApi, LicensingAnalysis } from '@/services/analyticsApi';
@@ -288,44 +290,29 @@ export default function LicensingAnalysisPage() {
               <CardTitle className="text-lg">Top Licensable Assets</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Patent ID</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Coverage</TableHead>
-                      <TableHead>Licensing Score</TableHead>
-                      <TableHead>Claims</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {result.licensable_assets.slice(0, 15).map((a, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-mono text-sm">{a.patent_id}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{a.title}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{a.coverage}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress value={a.licensing_score} className="h-1.5 w-16" />
-                            <span className="text-sm">{a.licensing_score}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>{a.claim_count}</TableCell>
-                      </TableRow>
-                    ))}
-                    {result.licensable_assets.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
-                          No licensable assets found.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+              {(() => {
+                type AssetRow = typeof result.licensable_assets[number];
+                const { column } = createColumns<AssetRow>();
+                return (
+                  <DataTable
+                    data={result.licensable_assets}
+                    columns={[
+                      column({ accessorKey: 'patent_id', header: ({ column }) => <DataTableColumnHeader column={column} title="Patent ID" />, cell: ({ getValue }) => <span className="font-mono text-sm">{getValue() as string}</span> }),
+                      column({ accessorKey: 'title', header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />, cell: ({ getValue }) => <span className="max-w-[200px] truncate block">{getValue() as string}</span> }),
+                      column({ accessorKey: 'coverage', header: 'Coverage', cell: ({ getValue }) => <Badge variant="outline">{getValue() as string}</Badge> }),
+                      column({ accessorKey: 'licensing_score', header: ({ column }) => <DataTableColumnHeader column={column} title="Licensing Score" />, cell: ({ getValue }) => { const v = getValue() as number; return <div className="flex items-center gap-2"><Progress value={v} className="h-1.5 w-16" /><span className="text-sm">{v}</span></div>; }, meta: { filterType: 'number-range' as const } }),
+                      column({ accessorKey: 'claim_count', header: ({ column }) => <DataTableColumnHeader column={column} title="Claims" />, meta: { filterType: 'number-range' as const } }),
+                    ]}
+                    getRowId={row => row.patent_id}
+                    features={{ enableSorting: true, enableFiltering: true, enableColumnVisibility: true, enableExport: true, enableDensityToggle: true }}
+                    initialSorting={[{ id: 'licensing_score', desc: true }]}
+                    exportConfig={{ filename: 'licensable-assets' }}
+                    initialPageSize={15}
+                    emptyState="No licensable assets found."
+                    className="rounded-none border-0 border-t"
+                  />
+                );
+              })()}
             </CardContent>
           </Card>
 

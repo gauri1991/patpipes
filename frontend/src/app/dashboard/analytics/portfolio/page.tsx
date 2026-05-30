@@ -27,6 +27,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { DataTable, createColumns } from '@/components/ui/data-table';
+import { DataTableColumnHeader } from '@/components/ui/data-table';
 
 import { useAnalyticsProjects } from '@/hooks/useAnalyticsData';
 import { analyticsApi, PortfolioAssessment } from '@/services/analyticsApi';
@@ -304,47 +306,31 @@ export default function PortfolioAssessmentPage() {
               <CardTitle className="text-lg">Top Patent Quality Scores</CardTitle>
               <CardDescription>Highest-scoring patents in the portfolio</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Patent ID</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Tier</TableHead>
-                      <TableHead>Quality Score</TableHead>
-                      <TableHead>Claim Breadth</TableHead>
-                      <TableHead>Fwd Citations</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {result.quality_scores.slice(0, 20).map(q => (
-                      <TableRow key={q.patent_id}>
-                        <TableCell className="font-mono text-sm">{q.patent_id}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{q.title}</TableCell>
-                        <TableCell>
-                          <Badge variant={TIER_BADGE[q.tier]}>{TIER_LABELS[q.tier]}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress value={q.quality_score} className="h-1.5 w-16" />
-                            <span className="text-sm font-mono">{q.quality_score}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="capitalize">{q.claim_breadth}</TableCell>
-                        <TableCell>{q.forward_citations}</TableCell>
-                      </TableRow>
-                    ))}
-                    {result.quality_scores.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
-                          No quality data available.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+            <CardContent className="p-0">
+              {(() => {
+                type QRow = typeof result.quality_scores[number];
+                const { column } = createColumns<QRow>();
+                return (
+                  <DataTable
+                    data={result.quality_scores}
+                    columns={[
+                      column({ accessorKey: 'patent_id', header: ({ column }) => <DataTableColumnHeader column={column} title="Patent ID" />, cell: ({ getValue }) => <span className="font-mono text-sm">{getValue() as string}</span> }),
+                      column({ accessorKey: 'title', header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />, cell: ({ getValue }) => <span className="max-w-[200px] truncate block">{getValue() as string}</span> }),
+                      column({ accessorKey: 'tier', header: 'Tier', cell: ({ getValue }) => { const t = getValue() as string; return <Badge variant={TIER_BADGE[t]}>{TIER_LABELS[t]}</Badge>; }, meta: { filterType: 'select' as const, filterOptions: Object.keys(TIER_LABELS).map(k => ({ label: TIER_LABELS[k], value: k })) } }),
+                      column({ accessorKey: 'quality_score', header: ({ column }) => <DataTableColumnHeader column={column} title="Quality Score" />, cell: ({ getValue }) => { const v = getValue() as number; return <div className="flex items-center gap-2"><Progress value={v} className="h-1.5 w-16" /><span className="text-sm font-mono">{v}</span></div>; }, meta: { filterType: 'number-range' as const } }),
+                      column({ accessorKey: 'claim_breadth', header: ({ column }) => <DataTableColumnHeader column={column} title="Claim Breadth" />, cell: ({ getValue }) => <span className="capitalize">{getValue() as string}</span> }),
+                      column({ accessorKey: 'forward_citations', header: ({ column }) => <DataTableColumnHeader column={column} title="Fwd Citations" />, meta: { filterType: 'number-range' as const } }),
+                    ]}
+                    getRowId={row => row.patent_id}
+                    features={{ enableSorting: true, enableFiltering: true, enableColumnVisibility: true, enableExport: true, enableDensityToggle: true }}
+                    initialSorting={[{ id: 'quality_score', desc: true }]}
+                    exportConfig={{ filename: 'portfolio-quality-scores' }}
+                    initialPageSize={20}
+                    emptyState="No quality data available."
+                    className="rounded-none border-0 border-t"
+                  />
+                );
+              })()}
             </CardContent>
           </Card>
 

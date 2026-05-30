@@ -10,6 +10,8 @@ import {
   ChevronUp, Info, ArrowRight, Loader2, Clipboard, Target, MessageSquare,
   BookOpen, Link2, UploadCloud, ArrowLeft,
 } from 'lucide-react';
+import { DataTable } from '@/components/ui/data-table';
+import { createBundleAttributeColumns } from './bundleAttributeColumns';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -348,7 +350,8 @@ export default function SalesPackageProjectDetail() {
   const [attributes, setAttributes] = useState<BundleAttributes[]>([]);
   const [attrTotal, setAttrTotal] = useState(0);
   const [attrOffset, setAttrOffset] = useState(0);
-  const [attrSearch, setAttrSearch] = useState('');
+  const [showGrantedOnly, setShowGrantedOnly] = useState(false);
+  const showGrantedOnlyRef = useRef(false);
   const [attrLoading, setAttrLoading] = useState(false);
   // Live Group A / H&I completeness, refreshed on every attribute load (Classify/Score All).
   const [liveCompleteness, setLiveCompleteness] = useState<AttributeCompleteness | null>(null);
@@ -357,7 +360,6 @@ export default function SalesPackageProjectDetail() {
   const [patentText, setPatentText] = useState<PatentRecordText | null>(null);
   const [patentTextLoading, setPatentTextLoading] = useState(false);
   const [patentDetailTab, setPatentDetailTab] = useState<'attributes' | 'text' | 'claims'>('attributes');
-  const [selectedAttrIds, setSelectedAttrIds] = useState<Set<string>>(new Set());
   const [aiScoring, setAiScoring] = useState(false);
   const [groupAScoring, setGroupAScoring] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -452,11 +454,15 @@ export default function SalesPackageProjectDetail() {
   }, [projectId]);
 
   // ── Attribute loading ────────────────────────────────────────────────────
+  // Keep ref in sync so loadAttributes always sees the current filter without re-creating the callback.
+  useEffect(() => { showGrantedOnlyRef.current = showGrantedOnly; }, [showGrantedOnly]);
+
   const loadAttributes = useCallback(async (offset: number) => {
     if (!projectId) return;
     setAttrLoading(true);
+    const legalStatus = showGrantedOnlyRef.current ? 'granted' : undefined;
     try {
-      const res = await analyticsApi.getBundleAttributes(projectId, 50, offset);
+      const res = await analyticsApi.getBundleAttributes(projectId, 50, offset, legalStatus);
       if (res.success && res.data) {
         const incoming = res.data.results;
         setAttributes(offset === 0 ? incoming : prev => [...prev, ...incoming]);
@@ -468,6 +474,9 @@ export default function SalesPackageProjectDetail() {
       setAttrLoading(false);
     }
   }, [projectId]);
+
+  // Reload from page 0 whenever the granted-only filter is toggled.
+  useEffect(() => { if (projectId) loadAttributes(0); }, [showGrantedOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Polling ───────────────────────────────────────────────────────────────
   const startPolling = useCallback((tid: string) => {
@@ -769,10 +778,7 @@ export default function SalesPackageProjectDetail() {
     ? pkgBundles.reduce((s, b) => s + (b.pct_trilateral ?? 0), 0) / pkgBundles.length
     : 0;
 
-  // Filtered attributes
-  const filteredAttrs = attributes.filter(a =>
-    !attrSearch || a.title?.toLowerCase().includes(attrSearch.toLowerCase()) || a.patent_id?.includes(attrSearch)
-  );
+  // attributes is passed directly to DataTable which handles search/filtering client-side
 
   // Filtered bundles for explorer left panel
   const filteredScorecard = scorecard.filter(s => {
@@ -967,203 +973,139 @@ export default function SalesPackageProjectDetail() {
                   </div>
                 )}
 
-                {/* Patent attribute table */}
-                <Card className="border border-neutral-200">
-                  <CardHeader className="px-4 py-3 border-b border-neutral-100">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm font-medium">Patent Attributes ({attrTotal.toLocaleString()} total)</CardTitle>
+                {/* Patent attribute table — powered by DataTable */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-sm font-medium text-neutral-700">
+                      Patent Attributes ({attrTotal.toLocaleString()} total)
+                    </span>
+                  </div>
+
+                  <DataTable
+                    data={attributes}
+                    columns={createBundleAttributeColumns({
+                      onEnrich: enrichSingleFromODP,
+                      onClassifyA: classifySingleGroupA,
+                      onScoreHI: scoreSingleWithAI,
+                      onEdit: setEditingAttr,
+                    })}
+                    getRowId={(row) => row.patent_record_id}
+                    isLoading={attrLoading && attributes.length === 0}
+                    features={{
+                      enableSelection: true,
+                      enableSorting: true,
+                      enableMultiSort: true,
+                      enableFiltering: true,
+                      enableColumnVisibility: true,
+                      enableDensityToggle: true,
+                      enableExport: true,
+                      enableVirtualization: true,
+                    }}
+                    initialVisibility={{
+                      a2_tech_subcategory: false,
+                      a3_stack_layer: false,
+                      a5_use_case: false,
+                      b1_sep_potential: false,
+                      b2_standard_tagged: false,
+                      c1_claim_type: false,
+                      c2_breadth: false,
+                      d1_external_detectability: false,
+                      e1_family_size: false,
+                      e2_prosecution_status: false,
+                      h2_prior_art_exposure: false,
+                      h5_forward_citations: false,
+                      h7_litigation_history: false,
+                    }}
+                    onRowClick={(row) => {
+                      const attr = row.original;
+                      setViewingAttr(attr);
+                      setPatentText(null);
+                      setPatentDetailTab('attributes');
+                      setPatentTextLoading(true);
+                      analyticsApi.getPatentRecordText(projectId!, attr.patent_record_id)
+                        .then(res => { if (res.success && res.data) setPatentText(res.data); })
+                        .catch(() => {})
+                        .finally(() => setPatentTextLoading(false));
+                    }}
+                    bulkActions={[
+                      {
+                        label: 'Classify Tech (A)',
+                        icon: <Sparkles className="w-3 h-3" />,
+                        onClick: async (rows) => {
+                          const ids = rows.map(r => r.original.patent_record_id);
+                          await runBulkWithProgress(
+                            ids,
+                            'Classifying technology domains (Group A)',
+                            (id) => analyticsApi.classifyTechnology(projectId!, [id]),
+                          );
+                        },
+                      },
+                      {
+                        label: 'Score Quality (H&I)',
+                        icon: <Sparkles className="w-3 h-3" />,
+                        onClick: async (rows) => {
+                          const ids = rows.map(r => r.original.patent_record_id);
+                          await runBulkWithProgress(
+                            ids,
+                            'Scoring H&I quality attributes',
+                            (id) => analyticsApi.extractBundleAttributes(projectId!, [id], HI_FIELDS),
+                          );
+                        },
+                      },
+                    ]}
+                    toolbarExtra={
                       <div className="flex items-center gap-2">
-                        <div className="relative">
-                          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
-                          <Input
-                            value={attrSearch}
-                            onChange={e => setAttrSearch(e.target.value)}
-                            placeholder="Search patents…"
-                            className="pl-8 h-8 text-xs w-56"
-                          />
-                        </div>
-                        <Button variant="outline" size="sm" onClick={() => loadAttributes(0)} disabled={attrLoading}>
+                        <Button
+                          variant={showGrantedOnly ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setShowGrantedOnly(v => !v)}
+                          className={showGrantedOnly ? 'bg-green-600 hover:bg-green-700 text-white border-green-600 gap-1 h-8' : 'gap-1 h-8'}
+                          title={showGrantedOnly ? 'Showing granted patents only' : 'Show granted patents only'}
+                        >
+                          <Filter className="w-3 h-3" />
+                          Granted only
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-8" onClick={() => loadAttributes(0)} disabled={attrLoading}>
                           <RefreshCw className={`w-3 h-3 ${attrLoading ? 'animate-spin' : ''}`} />
                         </Button>
                       </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-neutral-100 bg-neutral-50">
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500 w-8">
-                              <input type="checkbox" onChange={e => {
-                                if (e.target.checked) setSelectedAttrIds(new Set(filteredAttrs.map(a => a.patent_record_id)));
-                                else setSelectedAttrIds(new Set());
-                              }} />
-                            </th>
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500">Patent</th>
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500">Domain (A1)</th>
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500">Term (E4)</th>
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500">Strength (H1)</th>
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500">Filled %</th>
-                            <th className="text-left px-4 py-2 font-medium text-neutral-500">Source</th>
-                            <th className="text-right px-4 py-2 font-medium text-neutral-500">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredAttrs.length === 0 && (
-                            <tr><td colSpan={8} className="text-center py-8 text-neutral-400">
-                              {attrLoading ? 'Loading…' : 'No attribute data yet. Run analysis to populate.'}
-                            </td></tr>
-                          )}
-                          {filteredAttrs.map(attr => (
-                            <tr
-                              key={attr.patent_record_id}
-                              className="border-b border-neutral-50 hover:bg-neutral-50 cursor-pointer"
-                              onClick={() => {
-                                setViewingAttr(attr);
-                                setPatentText(null);
-                                setPatentDetailTab('attributes');
-                                setPatentTextLoading(true);
-                                analyticsApi.getPatentRecordText(projectId, attr.patent_record_id)
-                                  .then(res => { if (res.success && res.data) setPatentText(res.data); })
-                                  .catch(() => {})
-                                  .finally(() => setPatentTextLoading(false));
-                              }}
-                            >
-                              <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedAttrIds.has(attr.patent_record_id)}
-                                  onChange={e => {
-                                    const s = new Set(selectedAttrIds);
-                                    if (e.target.checked) s.add(attr.patent_record_id); else s.delete(attr.patent_record_id);
-                                    setSelectedAttrIds(s);
-                                  }}
-                                />
-                              </td>
-                              <td className="px-4 py-2">
-                                <div className="font-medium text-neutral-800 truncate max-w-xs hover:text-neutral-600">{attr.title || '—'}</div>
-                                <div className="text-neutral-400 font-mono">{attr.patent_id}</div>
-                              </td>
-                              <td className="px-4 py-2 text-neutral-600">{attr.a1_primary_domain || '—'}</td>
-                              <td className="px-4 py-2 text-neutral-600">
-                                {attr.e4_remaining_term_years != null ? `${attr.e4_remaining_term_years}y` : '—'}
-                              </td>
-                              <td className="px-4 py-2">
-                                {attr.h1_claim_strength != null
-                                  ? <span className={`font-semibold ${attr.h1_claim_strength >= 2 ? 'text-green-600' : attr.h1_claim_strength === 1 ? 'text-amber-600' : 'text-red-500'}`}>{attr.h1_claim_strength}/3</span>
-                                  : <span className="text-neutral-300">—</span>}
-                              </td>
-                              <td className="px-4 py-2">
-                                <div className="flex items-center gap-1.5">
-                                  <Progress value={attr.last_ai_extraction ? 75 : 15} className="h-1.5 w-16" />
-                                  <span className="text-neutral-400">{attr.last_ai_extraction ? '~75%' : '~15%'}</span>
-                                </div>
-                              </td>
-                              <td className="px-4 py-2">
-                                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${sourceColor(attr.ai_extracted_fields?.length ? 'ai' : attr.manually_set_fields?.length ? 'manual' : 'derived')}`}>
-                                  {attr.ai_extracted_fields?.length ? 'AI' : attr.manually_set_fields?.length ? 'Manual' : 'Derived'}
-                                </span>
-                              </td>
-                              <td className="px-4 py-2 text-right" onClick={e => e.stopPropagation()}>
-                                <div className="flex items-center justify-end gap-1">
-                                  {attr.enriched ? (
-                                    <span title="Enriched from USPTO ODP" className="inline-flex items-center text-green-600 px-1">
-                                      <Check className="w-3.5 h-3.5" />
-                                    </span>
-                                  ) : (
-                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                                      title="Enrich from USPTO ODP"
-                                      onClick={() => enrichSingleFromODP(attr.patent_record_id)}>
-                                      <Globe className="w-3 h-3 mr-1" />Enrich
-                                    </Button>
-                                  )}
-                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                    title="Classify technology domain (Group A)"
-                                    onClick={() => classifySingleGroupA(attr.patent_record_id)}>
-                                    <Sparkles className="w-3 h-3 mr-1" />A
-                                  </Button>
-                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50"
-                                    title="Score quality attributes (Groups H & I)"
-                                    onClick={() => scoreSingleWithAI(attr.patent_record_id)}>
-                                    <Sparkles className="w-3 h-3 mr-1" />H&I
-                                  </Button>
-                                  <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
-                                    onClick={() => setEditingAttr(attr)}>
-                                    <Edit2 className="w-3 h-3" />
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {attrOffset < attrTotal && (
-                      <div className="px-4 py-3 border-t border-neutral-100">
-                        <Button variant="outline" size="sm" onClick={() => loadAttributes(attrOffset)} disabled={attrLoading}>
-                          Load more ({attrTotal - attrOffset} remaining)
-                        </Button>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                    }
+                    exportConfig={{ filename: 'bundle-attributes' }}
+                    initialPageSize={50}
+                    emptyState={attrLoading ? undefined : 'No attribute data yet. Run analysis to populate.'}
+                  />
 
-                {/* Bulk score selected / live progress bar */}
-                {(selectedAttrIds.size > 0 || bulkProgress) && (
-                  <div className="flex items-center gap-3 bg-neutral-900 text-white rounded-lg px-4 py-3">
-                    {bulkProgress ? (
-                      /* ── Live progress ── */
-                      <>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm font-medium truncate">{bulkProgress.label}</span>
-                            <span className="text-xs text-neutral-400 ml-3 shrink-0">
-                              {bulkProgress.done} / {bulkProgress.total}
-                            </span>
-                          </div>
-                          <div className="w-full bg-neutral-700 rounded-full h-1.5">
-                            <div
-                              className="bg-cyan-400 h-1.5 rounded-full transition-all duration-300"
-                              style={{ width: `${Math.round((bulkProgress.done / bulkProgress.total) * 100)}%` }}
-                            />
-                          </div>
+                  {/* Load more — appends next batch to the attributes array */}
+                  {attrOffset < attrTotal && (
+                    <div className="px-1">
+                      <Button variant="outline" size="sm" onClick={() => loadAttributes(attrOffset)} disabled={attrLoading}>
+                        {attrLoading ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
+                        Load more ({(attrTotal - attrOffset).toLocaleString()} remaining)
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Live bulk-operation progress bar */}
+                  {bulkProgress && (
+                    <div className="flex items-center gap-3 bg-neutral-900 text-white rounded-lg px-4 py-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium truncate">{bulkProgress.label}</span>
+                          <span className="text-xs text-neutral-400 ml-3 shrink-0">
+                            {bulkProgress.done} / {bulkProgress.total}
+                          </span>
                         </div>
-                        <Loader2 className="w-4 h-4 animate-spin shrink-0 text-cyan-400" />
-                      </>
-                    ) : (
-                      /* ── Selection actions ── */
-                      <>
-                        <span className="text-sm">{selectedAttrIds.size} patents selected</span>
-                        <div className="flex gap-2 ml-auto">
-                          <Button size="sm" variant="secondary"
-                            onClick={async () => {
-                              const ids = Array.from(selectedAttrIds);
-                              setSelectedAttrIds(new Set());
-                              await runBulkWithProgress(
-                                ids,
-                                'Classifying technology domains (Group A)',
-                                (id) => analyticsApi.classifyTechnology(projectId!, [id]),
-                              );
-                            }}>
-                            <Sparkles className="w-3 h-3 mr-1" /> Classify Tech (A)
-                          </Button>
-                          <Button size="sm" variant="secondary"
-                            onClick={async () => {
-                              const ids = Array.from(selectedAttrIds);
-                              setSelectedAttrIds(new Set());
-                              await runBulkWithProgress(
-                                ids,
-                                'Scoring H&I quality attributes',
-                                (id) => analyticsApi.extractBundleAttributes(projectId!, [id], HI_FIELDS),
-                              );
-                            }}>
-                            <Sparkles className="w-3 h-3 mr-1" /> Score Quality (H&I)
-                          </Button>
+                        <div className="w-full bg-neutral-700 rounded-full h-1.5">
+                          <div
+                            className="bg-cyan-400 h-1.5 rounded-full transition-all duration-300"
+                            style={{ width: `${Math.round((bulkProgress.done / bulkProgress.total) * 100)}%` }}
+                          />
                         </div>
-                      </>
-                    )}
-                  </div>
-                )}
+                      </div>
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0 text-cyan-400" />
+                    </div>
+                  )}
+                </div>
               </TabsContent>
 
               {/* ══ TAB 2: CONFIGURE ══ */}
