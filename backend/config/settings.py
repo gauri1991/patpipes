@@ -167,9 +167,14 @@ _cors_extra = config('CORS_ALLOWED_ORIGINS', default='')
 if _cors_extra:
     CORS_ALLOWED_ORIGINS += [o.strip() for o in _cors_extra.split(',') if o.strip()]
 
+# Chrome extension origin: set CHROME_EXTENSION_ORIGIN=chrome-extension://<ID> in production .env
+_ext_origin = config('CHROME_EXTENSION_ORIGIN', default='')
+if _ext_origin:
+    CORS_ALLOWED_ORIGINS.append(_ext_origin)
+
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only for development
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only for development (covers extension in dev)
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'

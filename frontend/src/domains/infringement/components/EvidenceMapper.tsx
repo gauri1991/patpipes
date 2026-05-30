@@ -15,6 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ClaimMapping, ClaimElement, Annotation, ScreenshotBrief, infringementApi } from '@/services/infringementApi';
 import { PdfRegionViewer, CaptureMeta } from './PdfRegionViewer';
+import { WebEvidencePanel } from './WebEvidencePanel';
+import { ImageRegionViewer } from './ImageRegionViewer';
 import { ScreenshotAnnotator, AnnotationOverlay } from './ScreenshotAnnotator';
 import { HighlightedText, colorsInText } from './HighlightedText';
 import { toMediaUrl } from '@/domains/infringement/lib/mediaUrl';
@@ -39,7 +41,9 @@ function unwrap<T>(data: any): T[] {
 export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
   const router = useRouter();
   const workbenchRef = useRef<HTMLDivElement>(null);
-  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);   // PDF
+  const [imageUrl, setImageUrl] = useState<string | null>(null); // PNG/JPG from extension
+  const [webUrl, setWebUrl] = useState<string | null>(null);     // URL-only web evidence
   const [evidenceTitle, setEvidenceTitle] = useState('');
   const [mappings, setMappings] = useState<ClaimMapping[]>([]);
   // Claim numbers this evidence was tagged with (Evidence.related_claims); the claims pane
@@ -77,14 +81,21 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
       setError(null);
       const evRes = await infringementApi.getEvidenceItem(evidenceId);
       if (cancelled) return;
-      if (!evRes.success || !evRes.data?.file) {
-        setError('This evidence has no uploaded file to view.');
+      const filePath = evRes.data?.file || '';
+      const hasPdf = filePath.toLowerCase().includes('.pdf');
+      const hasImage = /\.(png|jpe?g|gif|webp)$/i.test(filePath);
+      const hasUrl = Boolean(evRes.data?.url);
+      if (!evRes.success || (!hasPdf && !hasImage && !hasUrl)) {
+        setError('This evidence has no file or URL to view.');
         setLoading(false);
         return;
       }
-      setFileUrl(toMediaUrl(evRes.data.file));
-      setEvidenceTitle(evRes.data.title);
-      setRelatedClaims((evRes.data.related_claims || []).map((c: any) => String(c)));
+      const evData = evRes.data!;
+      if (hasPdf) setFileUrl(toMediaUrl(filePath));
+      else if (hasImage) setImageUrl(toMediaUrl(filePath));
+      else if (hasUrl) setWebUrl(evData.url!);
+      setEvidenceTitle(evData.title);
+      setRelatedClaims((evData.related_claims || []).map((c: any) => String(c)));
       await loadMappings();
       // Load case-wide claim-term colors (auto-extract once if none yet).
       const caseRes = await infringementApi.getCase(caseId);
@@ -176,6 +187,17 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
     });
     // Pre-fill provenance (source PDF + page); analyst can edit before saving.
     setCaption(`${evidenceTitle} — p.${meta.page}`);
+    setPendingAnnotations([]);
+    setActiveColor(null);
+  }, [evidenceTitle]);
+
+  // Web evidence: user uploaded a screenshot; treat page=0, bbox=full-image
+  const handleWebScreenshot = useCallback((blob: Blob, previewUrl: string) => {
+    setPending((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl);
+      return { blob, previewUrl, meta: { page: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } } };
+    });
+    setCaption(evidenceTitle);
     setPendingAnnotations([]);
     setActiveColor(null);
   }, [evidenceTitle]);
@@ -291,7 +313,11 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-semibold truncate">Evidence Mapper — {evidenceTitle}</h1>
           <p className="text-xs text-muted-foreground">
-            Select claim element(s) on the left, then drag a region on the PDF to capture it.
+            {fileUrl
+              ? 'Select claim element(s) on the left, then drag a region on the PDF to capture it.'
+              : imageUrl
+              ? 'Select claim element(s) on the left, then drag a region on the screenshot (or map the full image).'
+              : 'Select claim element(s) on the left, then upload a screenshot from the web page to map it.'}
           </p>
         </div>
         {selectedCount > 0 && (
@@ -467,10 +493,16 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
             </div>
           </div>
 
-          {/* Right: PDF viewer */}
+          {/* Right: PDF / image / web evidence panel */}
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex-1 min-h-0">
-              {fileUrl && <PdfRegionViewer fileUrl={fileUrl} onCapture={handleCapture} fullscreenRef={workbenchRef} />}
+              {fileUrl ? (
+                <PdfRegionViewer fileUrl={fileUrl} onCapture={handleCapture} fullscreenRef={workbenchRef} />
+              ) : imageUrl ? (
+                <ImageRegionViewer imageUrl={imageUrl} onCapture={handleCapture} fullscreenRef={workbenchRef} />
+              ) : webUrl ? (
+                <WebEvidencePanel evidenceUrl={webUrl} onScreenshotReady={handleWebScreenshot} />
+              ) : null}
             </div>
           </div>
         </div>
@@ -487,7 +519,9 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between mb-2">
-              <span className="text-xs font-semibold text-neutral-700">Captured region · page {pending.meta.page} — mark it up below</span>
+              <span className="text-xs font-semibold text-neutral-700">
+                {pending.meta.page > 0 ? `Captured region · page ${pending.meta.page} — mark it up below` : 'Captured screenshot — mark it up below'}
+              </span>
               <button className="text-neutral-400 hover:text-neutral-700" onClick={discardPending} disabled={saving}>
                 <X className="h-4 w-4" />
               </button>
@@ -542,7 +576,11 @@ export function EvidenceMapper({ caseId, evidenceId }: EvidenceMapperProps) {
               </div>
             )}
             <p className="text-xs text-muted-foreground mb-2">
-              {selectedCount === 0 ? 'Select at least one element above.' : `Maps to ${selectedCount} element(s) · page ${pending.meta.page}`}
+              {selectedCount === 0
+                ? 'Select at least one element above.'
+                : pending.meta.page > 0
+                  ? `Maps to ${selectedCount} element(s) · page ${pending.meta.page}`
+                  : `Maps to ${selectedCount} element(s)`}
             </p>
 
             <div className="flex justify-end gap-2">

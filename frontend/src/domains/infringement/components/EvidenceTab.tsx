@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Plus,
   FileText,
+  Globe,
   Download,
   Trash2,
   ExternalLink,
@@ -114,7 +115,7 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
           </Button>
           <Button onClick={() => setUploadDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Upload Evidence
+            Add Evidence
           </Button>
         </div>
       </div>
@@ -167,7 +168,7 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
             </p>
             <Button onClick={() => setUploadDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
-              Upload First Evidence
+              Add First Evidence
             </Button>
           </CardContent>
         </Card>
@@ -189,7 +190,9 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
                     />
                     <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <FileText className="h-4 w-4 text-muted-foreground" />
+                      {(!item.file && item.url)
+                        ? <Globe className="h-4 w-4 text-blue-500" />
+                        : <FileText className="h-4 w-4 text-muted-foreground" />}
                       <span className="font-medium">{item.title}</span>
                       <Badge variant="outline">
                         {getEvidenceTypeLabel(item.evidence_type)}
@@ -226,7 +229,9 @@ export function EvidenceTab({ caseId, caseName }: EvidenceTabProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    {item.file && item.file.toLowerCase().includes('.pdf') && (
+                    {(item.file?.toLowerCase().includes('.pdf') ||
+                      /\.(png|jpe?g|gif|webp)$/i.test(item.file || '') ||
+                      (!item.file && item.url)) && (
                       <Button
                         variant="outline"
                         size="sm"

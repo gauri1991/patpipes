@@ -237,6 +237,7 @@ class Evidence(models.Model):
         ('video', 'Video'),
         ('testimony', 'Expert Testimony'),
         ('research', 'Research Paper'),
+        ('webpage', 'Web Page'),
         ('other', 'Other'),
     ]
 

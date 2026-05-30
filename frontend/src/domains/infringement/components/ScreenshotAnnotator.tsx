@@ -88,13 +88,24 @@ function renderAnnotation(a: Annotation, w: number, h: number, opts?: { selected
 }
 
 // --- read-only overlay ----------------------------------------------------
-export function AnnotationOverlay({ annotations }: { annotations?: Annotation[] }) {
+export function AnnotationOverlay({
+  annotations,
+  activeColors,
+}: {
+  annotations?: Annotation[];
+  activeColors?: string[];
+}) {
   const { ref, size } = useSize();
+  const hasFilter = activeColors && activeColors.length > 0;
   return (
     <div ref={ref} className="absolute inset-0 pointer-events-none">
       {!!(annotations && annotations.length && size.w > 0) && (
         <svg width={size.w} height={size.h} className="absolute inset-0">
-          {annotations.map((a) => renderAnnotation(a, size.w, size.h))}
+          {annotations.map((a) => (
+            <g key={a.id} opacity={hasFilter && !activeColors!.includes(a.color) ? 0.2 : 1}>
+              {renderAnnotation(a, size.w, size.h)}
+            </g>
+          ))}
         </svg>
       )}
     </div>

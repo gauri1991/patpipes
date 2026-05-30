@@ -1100,6 +1100,30 @@ class EvidenceViewSet(viewsets.ModelViewSet):
                 element.evidence_references = [r for r in refs if r != evidence_id]
                 element.save(update_fields=['evidence_references', 'updated_at'])
 
+    @action(detail=False, methods=['get'], url_path='fetch-url-metadata')
+    def fetch_url_metadata(self, request):
+        """Fetch the title and a short description from a URL for pre-filling the
+        Add Web Page evidence form.  Returns {title, description}."""
+        import requests as http_requests
+        from bs4 import BeautifulSoup
+
+        url = (request.query_params.get('url') or '').strip()
+        if not url or not url.lower().startswith(('http://', 'https://')):
+            return Response({'error': 'A valid http(s) url is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            resp = http_requests.get(url, timeout=10, headers={'User-Agent': 'PatentAnalytics/1.0'})
+            resp.raise_for_status()
+        except Exception as exc:
+            return Response({'error': f'Failed to fetch URL: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        soup = BeautifulSoup(resp.text[:500000], 'html.parser')
+        for tag in soup(['script', 'style', 'noscript']):
+            tag.decompose()
+        title = (soup.title.string.strip() if soup.title and soup.title.string else '') or url[:255]
+        paragraphs = [p.get_text(separator=' ', strip=True) for p in soup.find_all('p') if len(p.get_text(strip=True)) > 40]
+        description = paragraphs[0][:500] if paragraphs else ''
+        return Response({'title': title[:255], 'description': description})
+
     @action(detail=False, methods=['post'], url_path='suggest-from-url')
     def suggest_from_url(self, request):
         """Assisted evidence sourcing: fetch a product URL server-side, extract text,

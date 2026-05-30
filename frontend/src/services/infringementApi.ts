@@ -201,6 +201,7 @@ export interface ScreenshotBrief {
   caption?: string;
   evidence_id?: string;
   evidence_title?: string;
+  evidence_url?: string;
   bbox?: { x: number; y: number; width: number; height: number };
   annotations?: Annotation[];
   claim_elements?: string[];

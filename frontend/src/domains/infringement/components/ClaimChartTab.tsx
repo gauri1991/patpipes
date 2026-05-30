@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Plus,
   List,
@@ -19,17 +20,28 @@ import {
   Scale,
   Loader2,
   AlertCircle,
+  Camera,
+  AlertTriangle,
+  ExternalLink as ExternalLinkIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { useClaimMappings } from '@/hooks/useInfringementData';
 import {
   ClaimMapping,
   ClaimElement,
   ElementSummary,
+  ScreenshotBrief,
   infringementApi,
 } from '@/services/infringementApi';
 import {
@@ -41,9 +53,11 @@ import { ClaimMappingDialog } from './ClaimMappingDialog';
 import { ElementDialog } from './ElementDialog';
 import { DoeAnalysisDialog } from './DoeAnalysisDialog';
 import { LinkEvidenceDialog } from './LinkEvidenceDialog';
-import { HighlightedText } from './HighlightedText';
+import { HighlightedText, colorsInText } from './HighlightedText';
 import { ClaimTermsManager } from './ClaimTermsManager';
+import { AnnotationOverlay } from './ScreenshotAnnotator';
 import { stripClaimMarkup } from '@/domains/infringement/lib/claimText';
+import { toMediaUrl } from '@/domains/infringement/lib/mediaUrl';
 import { Link2, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -55,6 +69,7 @@ interface ClaimChartTabProps {
 }
 
 export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }: ClaimChartTabProps) {
+  const router = useRouter();
   const { claimMappings, loading, refresh, deleteClaimMapping } = useClaimMappings({ case: caseId });
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
@@ -136,6 +151,12 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
     next.has(id) ? next.delete(id) : next.add(id);
     setExpandedClaims(next);
   };
+
+  // Screenshot preview modal — carries the element's active term-colors for filtered overlay
+  const [viewingScreenshot, setViewingScreenshot] = useState<{
+    shot: ScreenshotBrief;
+    activeColors: string[];
+  } | null>(null);
 
   const toggleRowSelection = (id: string) => {
     const next = new Set(selectedRows);
@@ -321,6 +342,27 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
       toast.success('Element deleted');
     } catch {
       toast.error('Failed to delete element');
+    }
+  };
+
+  // Inline status toggle for a claim element
+  const handleUpdateElementStatus = async (
+    elementId: string,
+    mappingId: string,
+    value: string,
+  ) => {
+    const meets = value === 'true' ? true : value === 'false' ? false : null;
+    try {
+      await infringementApi.updateClaimElement(elementId, { meets_limitation: meets });
+      setClaimElements((prev) => ({
+        ...prev,
+        [mappingId]: prev[mappingId].map((e) =>
+          e.id === elementId ? { ...e, meets_limitation: meets } : e
+        ),
+      }));
+      refreshElements(mappingId);
+    } catch {
+      toast.error('Failed to update status');
     }
   };
 
@@ -778,67 +820,174 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
                                     : 'border-l-amber-400'
                                 }`}
                               >
-                                <div className="flex items-start justify-between">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-2">
-                                      <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded">#{element.element_order}</span>
-                                      <Badge className={getElementTypeBadge(element.element_type)}>{element.element_type}</Badge>
-                                      <Badge className={badge.className}>{badge.label}</Badge>
-                                      {element.doe_score != null && (
-                                        <Badge variant="outline" className="text-xs">DoE: {element.doe_score}%</Badge>
-                                      )}
-                                    </div>
-                                    <div className="grid md:grid-cols-2 gap-3">
-                                      <div>
-                                        <p className="text-xs font-medium text-muted-foreground mb-1">Element Text:</p>
-                                        <p className="text-sm"><HighlightedText text={element.element_text} termColors={termColors} /></p>
-                                      </div>
-                                      {element.accused_feature && (
-                                        <div>
-                                          <p className="text-xs font-medium text-muted-foreground mb-1">Accused Feature:</p>
-                                          <p className="text-sm font-medium">{element.accused_feature}</p>
-                                          {element.accused_feature_description && (
-                                            <p className="text-xs text-muted-foreground mt-1">{element.accused_feature_description}</p>
+                                {(() => {
+                                  const elementActiveColors = colorsInText(element.element_text, termColors);
+                                  return (
+                                    <div className="flex items-start gap-3">
+                                      {/* LEFT: claim info — narrower fixed column */}
+                                      <div className="w-[36%] shrink-0 min-w-0">
+                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                          <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded">#{element.element_order}</span>
+                                          <Badge className={getElementTypeBadge(element.element_type)}>{element.element_type}</Badge>
+                                          {/* Inline status selector */}
+                                          <select
+                                            value={element.meets_limitation === null || element.meets_limitation === undefined ? 'null' : String(element.meets_limitation)}
+                                            onChange={(e) => handleUpdateElementStatus(element.id, mapping.id, e.target.value)}
+                                            className={`text-xs border rounded px-1.5 py-0.5 cursor-pointer font-medium ${badge.className}`}
+                                            title="Update element status"
+                                          >
+                                            <option value="null">Unknown</option>
+                                            <option value="true">Met</option>
+                                            <option value="false">Not Met</option>
+                                          </select>
+                                          {element.doe_score != null && (
+                                            <Badge variant="outline" className="text-xs">DoE: {element.doe_score}%</Badge>
                                           )}
                                         </div>
-                                      )}
-                                    </div>
-                                    {element.linked_evidence && element.linked_evidence.length > 0 && (
-                                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                        <span className="text-xs font-medium text-muted-foreground">Citations:</span>
-                                        {element.linked_evidence.map((ev) =>
-                                          ev.url ? (
-                                            <a
-                                              key={ev.id}
-                                              href={ev.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border bg-blue-50 text-blue-700 hover:bg-blue-100"
-                                              title={ev.evidence_type}
-                                            >
-                                              <ExternalLink className="h-3 w-3" />{ev.title}
-                                            </a>
-                                          ) : (
-                                            <Badge key={ev.id} variant="outline" className="text-xs" title={ev.evidence_type}>
-                                              {ev.title}
-                                            </Badge>
-                                          )
+                                        <div className="space-y-2">
+                                          <div>
+                                            <p className="text-xs font-medium text-muted-foreground mb-1">Element Text:</p>
+                                            <p className="text-sm"><HighlightedText text={element.element_text} termColors={termColors} /></p>
+                                          </div>
+                                          {element.accused_feature && (
+                                            <div>
+                                              <p className="text-xs font-medium text-muted-foreground mb-1">Accused Feature:</p>
+                                              <p className="text-sm font-medium">{element.accused_feature}</p>
+                                              {element.accused_feature_description && (
+                                                <p className="text-xs text-muted-foreground mt-1">{element.accused_feature_description}</p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                        {element.linked_evidence && element.linked_evidence.length > 0 && (
+                                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                            <span className="text-xs font-medium text-muted-foreground">Citations:</span>
+                                            {element.linked_evidence.map((ev) =>
+                                              ev.url ? (
+                                                <a
+                                                  key={ev.id}
+                                                  href={ev.url}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border bg-blue-50 text-blue-700 hover:bg-blue-100"
+                                                  title={ev.evidence_type}
+                                                >
+                                                  <ExternalLink className="h-3 w-3" />{ev.title}
+                                                </a>
+                                              ) : (
+                                                <Badge key={ev.id} variant="outline" className="text-xs" title={ev.evidence_type}>
+                                                  {ev.title}
+                                                </Badge>
+                                              )
+                                            )}
+                                          </div>
                                         )}
                                       </div>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-1 ml-2">
-                                    <Button variant="ghost" size="sm" onClick={() => { setLinkEvidenceElement(element); setLinkEvidenceOpen(true); }} title="Link evidence">
-                                      <Link2 className="h-3 w-3" />
-                                    </Button>
-                                    <Button variant="ghost" size="sm" onClick={() => { setSelectedElement(element); setDoeDialogOpen(true); }} title="Analyze DoE">
-                                      <Zap className="h-3 w-3" />
-                                    </Button>
-                                    <Button variant="ghost" size="sm" onClick={() => handleDeleteElement(element.id, mapping.id)} title="Delete">
-                                      <Trash2 className="h-3 w-3 text-destructive" />
-                                    </Button>
-                                  </div>
-                                </div>
+
+                                      {/* RIGHT: evidence screenshots — full natural size, takes remaining width */}
+                                      <div className="hidden md:flex flex-col gap-3 flex-1 min-w-0 border-l pl-3 self-start">
+                                        {element.screenshots && element.screenshots.length > 0 ? (
+                                          <>
+                                            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                                              Evidence ({element.screenshots.length})
+                                            </p>
+                                            {element.screenshots.map((s) => (
+                                              <div key={s.id} className="space-y-1">
+                                                <div
+                                                  className="relative group/shot cursor-pointer rounded border overflow-hidden bg-muted hover:ring-2 ring-cyan-400 transition-all w-full"
+                                                  onClick={() => setViewingScreenshot({ shot: s, activeColors: elementActiveColors })}
+                                                >
+                                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                  <img
+                                                    src={toMediaUrl(s.image)}
+                                                    alt={s.caption || 'screenshot'}
+                                                    className="w-full h-auto block"
+                                                    crossOrigin="anonymous"
+                                                  />
+                                                  <AnnotationOverlay annotations={s.annotations} activeColors={elementActiveColors} />
+                                                  {(!s.annotations || s.annotations.length === 0) && (
+                                                    <div
+                                                      className="absolute top-1 right-1 bg-yellow-400 rounded-full w-4 h-4 flex items-center justify-center shadow"
+                                                      title="No annotations — open mapper to highlight the relevant section"
+                                                    >
+                                                      <AlertTriangle className="h-2.5 w-2.5 text-white" />
+                                                    </div>
+                                                  )}
+                                                  <div className="absolute inset-0 hidden group-hover/shot:flex items-end justify-end p-1.5 bg-gradient-to-t from-black/30 to-transparent pointer-events-none">
+                                                    <span className="text-[10px] bg-black/60 text-white px-1.5 py-0.5 rounded">click to expand</span>
+                                                  </div>
+                                                </div>
+                                                <div className="flex items-center gap-1 text-[11px] text-muted-foreground flex-wrap">
+                                                  {s.evidence_title && (
+                                                    <span className="truncate max-w-[160px]">{s.evidence_title}</span>
+                                                  )}
+                                                  {s.caption && s.caption !== s.evidence_title && (
+                                                    <span className="truncate max-w-[120px] italic">{s.caption}</span>
+                                                  )}
+                                                  {s.page_number != null && (
+                                                    <span className="shrink-0">— p.{s.page_number}</span>
+                                                  )}
+                                                  {(s.evidence_url || s.evidence_id) && (
+                                                    <>
+                                                      <span className="shrink-0 text-muted-foreground/50">|</span>
+                                                      {s.evidence_url ? (
+                                                        <a
+                                                          href={s.evidence_url}
+                                                          target="_blank"
+                                                          rel="noopener noreferrer"
+                                                          className="shrink-0 text-cyan-600 hover:underline inline-flex items-center gap-0.5"
+                                                          onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                          Source <ExternalLinkIcon className="h-2.5 w-2.5" />
+                                                        </a>
+                                                      ) : (
+                                                        <button
+                                                          type="button"
+                                                          className="shrink-0 text-cyan-600 hover:underline"
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (!window.confirm('Open this evidence in the mapper? Unsaved changes on this page will be lost.')) return;
+                                                            router.push(`/dashboard/infringement/${caseId}/evidence/${s.evidence_id}/map`);
+                                                          }}
+                                                        >
+                                                          Link
+                                                        </button>
+                                                      )}
+                                                    </>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </>
+                                        ) : (
+                                          <div className="flex flex-col items-center gap-1.5 py-4 text-center">
+                                            <Camera className="h-5 w-5 text-muted-foreground/40" />
+                                            <p className="text-[11px] text-muted-foreground/60 leading-tight">No screenshots<br/>mapped yet</p>
+                                            <a
+                                              href={`/dashboard/infringement/${caseId}?tab=evidence`}
+                                              className="text-[10px] text-cyan-600 hover:underline"
+                                            >
+                                              Add evidence
+                                            </a>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {/* Action buttons */}
+                                      <div className="flex flex-col gap-1 shrink-0 items-end">
+                                        <Button variant="ghost" size="sm" onClick={() => { setLinkEvidenceElement(element); setLinkEvidenceOpen(true); }} title="Link evidence">
+                                          <Link2 className="h-3 w-3" />
+                                        </Button>
+                                        <Button variant="ghost" size="sm" onClick={() => { setSelectedElement(element); setDoeDialogOpen(true); }} title="Analyze DoE">
+                                          <Zap className="h-3 w-3" />
+                                        </Button>
+                                        <Button variant="ghost" size="sm" onClick={() => handleDeleteElement(element.id, mapping.id)} title="Delete">
+                                          <Trash2 className="h-3 w-3 text-destructive" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             );
                           })}
@@ -911,6 +1060,65 @@ export function ClaimChartTab({ caseId, caseName, patentNumber, onImportClaims }
           if (linkEvidenceElement) refreshElements(linkEvidenceElement.claim_mapping);
         }}
       />
+
+      {/* Screenshot preview modal */}
+      {viewingScreenshot && (
+        <Dialog open onOpenChange={() => setViewingScreenshot(null)}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {viewingScreenshot.shot.caption || viewingScreenshot.shot.evidence_title || 'Screenshot'}
+              </DialogTitle>
+              <DialogDescription>
+                {viewingScreenshot.shot.evidence_title && viewingScreenshot.shot.caption
+                  ? viewingScreenshot.shot.evidence_title
+                  : viewingScreenshot.shot.page_number
+                  ? `Page ${viewingScreenshot.shot.page_number}`
+                  : null}
+                {(!viewingScreenshot.shot.annotations || viewingScreenshot.shot.annotations.length === 0) && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-yellow-600">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    No annotations — open mapper to highlight the relevant section
+                  </span>
+                )}
+                {viewingScreenshot.activeColors.length > 0 &&
+                  viewingScreenshot.shot.annotations &&
+                  viewingScreenshot.shot.annotations.some((a) => !viewingScreenshot.activeColors.includes(a.color)) && (
+                  <span className="ml-2 text-muted-foreground text-xs">Dimmed marks are for other claim elements.</span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="relative rounded overflow-hidden border">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={toMediaUrl(viewingScreenshot.shot.image)}
+                alt={viewingScreenshot.shot.caption || 'screenshot'}
+                className="w-full block"
+                crossOrigin="anonymous"
+              />
+              <AnnotationOverlay
+                annotations={viewingScreenshot.shot.annotations}
+                activeColors={viewingScreenshot.activeColors}
+              />
+            </div>
+            {viewingScreenshot.shot.evidence_id && (
+              <div className="flex justify-end pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (!window.confirm('Open this evidence in the mapper? Unsaved changes on this page will be lost.')) return;
+                    router.push(`/dashboard/infringement/${caseId}/evidence/${viewingScreenshot.shot.evidence_id}/map`);
+                    setViewingScreenshot(null);
+                  }}
+                >
+                  <ExternalLinkIcon className="h-4 w-4 mr-2" />
+                  Edit in Mapper
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

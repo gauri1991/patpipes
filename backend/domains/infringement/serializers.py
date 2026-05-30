@@ -33,6 +33,7 @@ def _screenshot_briefs(obj, request=None):
             # provenance: which PDF + which region on the page the crop came from.
             'evidence_id': str(s.evidence_id),
             'evidence_title': s.evidence.title if s.evidence_id else '',
+            'evidence_url': (s.evidence.url or '') if s.evidence_id else '',
             'bbox': {'x': s.bbox_x, 'y': s.bbox_y, 'width': s.bbox_width, 'height': s.bbox_height},
             'annotations': s.annotations or [],
             # all elements this screenshot maps to — lets the UI unmap from one vs delete.

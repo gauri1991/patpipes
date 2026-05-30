@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Patent Evidence Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <!-- Header (always visible) -->
+  <div class="header">
+    <div class="header-title">
+      <div class="header-dot"></div>
+      Patent Evidence
+    </div>
+    <div class="header-actions" id="headerActions" style="display:none">
+      <span class="user-badge" id="userBadge"></span>
+      <button class="btn-icon" id="btnSettings" title="Settings">⚙</button>
+      <button class="btn-icon" id="btnLogout" title="Sign out">↩</button>
+    </div>
+  </div>
+
+  <!-- Settings panel (toggled) -->
+  <div class="settings-panel section" id="settingsPanel">
+    <div class="field">
+      <label>Backend URL</label>
+      <input type="url" id="backendUrlInput" placeholder="http://localhost:8000">
+    </div>
+    <button class="btn btn-secondary" id="btnSaveSettings">Save Settings</button>
+  </div>
+
+  <!-- ─── LOGIN VIEW ─── -->
+  <div id="loginView" class="section">
+    <div class="field">
+      <label>Backend URL</label>
+      <input type="url" id="loginBackendUrl" placeholder="http://localhost:8000">
+    </div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="loginPassword" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" id="btnLogin">
+      <span id="loginBtnText">Sign In</span>
+    </button>
+    <div id="loginError" class="msg msg-error" style="display:none"></div>
+  </div>
+
+  <!-- ─── OTP VIEW ─── -->
+  <div id="otpView" class="section" style="display:none">
+    <div class="msg msg-info" style="margin-bottom:10px;">
+      Two-factor authentication is enabled. Enter the 6-digit code from your authenticator app.
+    </div>
+    <div class="field">
+      <label>Authenticator Code</label>
+      <input type="text" id="otpCode" placeholder="123456" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+    </div>
+    <button class="btn btn-primary" id="btnVerifyOtp">
+      <span id="otpBtnText">Verify</span>
+    </button>
+    <button class="btn btn-secondary" style="margin-top:6px" id="btnBackToLogin">← Back</button>
+    <div id="otpError" class="msg msg-error" style="display:none"></div>
+  </div>
+
+  <!-- ─── CAPTURE VIEW ─── -->
+  <div id="captureView" style="display:none">
+    <!-- Case selection -->
+    <div class="section">
+      <div class="field">
+        <label>Infringement Case</label>
+        <select id="caseSelect">
+          <option value="">Loading cases…</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Caption (optional)</label>
+        <input type="text" id="captionInput" placeholder="What does this screenshot show?">
+      </div>
+    </div>
+
+    <!-- Capture buttons -->
+    <div class="section">
+      <div class="btn-row">
+        <button class="btn btn-capture" id="btnFullCapture">
+          📸 Full Page
+        </button>
+        <button class="btn btn-capture" id="btnRegionCapture">
+          ✂ Select Region
+        </button>
+      </div>
+      <div id="captureMsg" class="msg msg-info" style="display:none">
+        Switch to the page and drag to select a region, then return here.
+      </div>
+    </div>
+
+    <!-- Preview + save -->
+    <div class="section" id="previewSection" style="display:none">
+      <div class="preview-wrap">
+        <img id="previewImg" src="" alt="Captured screenshot">
+        <button class="preview-clear" id="btnClearPreview" title="Discard">✕</button>
+      </div>
+      <button class="btn btn-success" id="btnSave">
+        <span id="saveBtnText">Save to Case</span>
+      </button>
+      <div id="savedMsg" style="display:none; margin-top:8px;">
+        <div class="msg msg-success">Saved!
+          <a class="open-link" id="openMapperLink" href="#" target="_blank">Open in Mapper ↗</a>
+        </div>
+      </div>
+      <div id="saveError" class="msg msg-error" style="display:none"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
